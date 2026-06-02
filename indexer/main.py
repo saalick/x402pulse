@@ -75,8 +75,11 @@ TRANSFER_TOPIC = Web3.keccak(text="Transfer(address,address,uint256)").to_0x_hex
 BLOCKS_PER_HOUR = 1_800
 BLOCKS_PER_DAY = 43_200
 
-# Backfill window. Default 30 days — overridable to test smaller runs.
-BACKFILL_HOURS = float(os.getenv("BACKFILL_HOURS", str(30 * 24)))
+# Backfill window. Default 365 days — covers full x402 history (the protocol
+# started mid-2025). Overridable via env (Railway/Fly/local) to test smaller
+# runs. The backward-extension logic in main() will extend an existing
+# smaller window up to whatever this is set to on the next restart.
+BACKFILL_HOURS = float(os.getenv("BACKFILL_HOURS", str(365 * 24)))
 BACKFILL_BLOCKS = int(BACKFILL_HOURS * BLOCKS_PER_HOUR)
 
 # Most RPC providers cap the topic-OR list at ~50–100. 40 is comfortably
@@ -524,6 +527,72 @@ def backfill(pool: W3Pool, conn: sqlite3.Connection, start_block: int, head: int
     log.info("Backfill complete. Inserted %s transfers.", total)
 
 
+def backfill_extend_backward(
+    pool: W3Pool,
+    conn: sqlite3.Connection,
+    desired_low: int,
+    current_low: int,
+) -> None:
+    """Extend the indexed window BACKWARDS from current_low down to desired_low.
+
+    Resumable: state key `backward_extended_to_block` stores the lowest block
+    we've reached. On restart, the loop picks up from there instead of redoing
+    work. INSERT OR IGNORE on the schema also guarantees idempotency.
+    """
+    chunk = pool[0][0].chunk_blocks
+
+    # Resume point: prefer the existing state value if it's already lower
+    # than current_low (we've made some progress in a previous run).
+    resumed = get_state(conn, "backward_extended_to_block")
+    if resumed:
+        resumed_int = int(resumed)
+        if resumed_int < current_low:
+            current_low = resumed_int
+
+    if desired_low >= current_low:
+        log.info("Backward extension: already at desired low %s.", desired_low)
+        return
+
+    span = current_low - desired_low
+    log.info(
+        "Backward extension: %s ← %s (%s blocks, chunk=%s via %s)",
+        desired_low, current_low - 1, span, chunk, pool[0][0].name,
+    )
+
+    # Iterate OLDEST → newest in chunk-sized steps. After each chunk, update
+    # state so a kill mid-extension resumes correctly.
+    cursor = desired_low
+    total = 0
+    last_progress_log = time.time()
+    upper = current_low - 1   # inclusive
+
+    while cursor <= upper and not _stop:
+        chunk_end = min(cursor + chunk - 1, upper)
+        logs = fetch_logs(pool, cursor, chunk_end)
+        added = decode_and_insert(conn, pool, logs)
+        total += added
+        if added:
+            log.info(
+                "  ← blocks %s-%s: +%s rows (backward total %s)",
+                cursor, chunk_end, added, total,
+            )
+        # Track the LOWEST block we've covered so far.
+        set_state(conn, "backward_extended_to_block", str(cursor))
+        cursor = chunk_end + 1
+
+        now = time.time()
+        if now - last_progress_log > 15:
+            done = cursor - desired_low
+            pct = done * 100 / max(span, 1)
+            log.info(
+                "  ← progress %s/%s (%.1f%%), inserted %s",
+                done, span, pct, total,
+            )
+            last_progress_log = now
+
+    log.info("Backward extension complete. Inserted %s transfers.", total)
+
+
 def follow(pool: W3Pool, conn: sqlite3.Connection) -> None:
     chunk = pool[0][0].chunk_blocks
     log.info("Tailing new blocks every %ss (chunk=%s via %s).",
@@ -569,11 +638,33 @@ def main() -> None:
         init_db(conn)
         last_indexed = int(get_state(conn, "last_indexed_block") or 0)
 
-        backfill_start = max(head - BACKFILL_BLOCKS, last_indexed + 1)
-        if backfill_start <= head:
-            backfill(bf_pool, conn, backfill_start, head)
+        # FORWARD pass — index from where we left off up to current head.
+        # For a fresh DB this also kicks off the initial backfill window.
+        forward_start = (last_indexed + 1) if last_indexed else max(head - BACKFILL_BLOCKS, 1)
+        if forward_start <= head:
+            backfill(bf_pool, conn, forward_start, head)
         else:
-            log.info("Already caught up to head — skipping backfill.")
+            log.info("Already caught up to head — skipping forward backfill.")
+
+        # BACKWARD pass — if the configured BACKFILL_HOURS is larger than
+        # what we currently have indexed, extend the window backwards.
+        desired_low = max(1, head - BACKFILL_BLOCKS)
+        db_min = conn.execute(
+            "SELECT MIN(block_number) FROM transfers"
+        ).fetchone()[0]
+        if db_min and db_min > desired_low and not _stop:
+            log.info(
+                "Indexed window currently starts at block %s; BACKFILL_BLOCKS "
+                "wants %s. Extending backwards…",
+                db_min, desired_low,
+            )
+            backfill_extend_backward(bf_pool, conn, desired_low, db_min)
+        elif db_min:
+            log.info(
+                "Indexed window already reaches block %s (≤ desired %s). "
+                "Skipping backward extension.",
+                db_min, desired_low,
+            )
 
         # Tail pool: Alchemy first (low latency for small requests).
         log.info("Building tail RPC pool…")
