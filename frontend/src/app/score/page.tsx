@@ -2,9 +2,8 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { Header } from "@/components/Header";
-import { FacilitatorBadge } from "@/components/Leaderboards";
 import { api, type TrustScore } from "@/lib/api";
 import { formatUsdc, shortAddress, timeAgo } from "@/lib/format";
 
@@ -23,7 +22,17 @@ const SCORE_COLORS: Array<{ max: number; hex: string }> = [
 const colorForScore = (s: number) =>
   SCORE_COLORS.find((c) => s < c.max)?.hex ?? "#66ffb2";
 
+// Page wrapper — useSearchParams() must live inside a Suspense boundary
+// for Next.js App Router (otherwise build fails on static prerender).
 export default function ScorePage() {
+  return (
+    <Suspense fallback={null}>
+      <ScoreBody />
+    </Suspense>
+  );
+}
+
+function ScoreBody() {
   const params = useSearchParams();
   const router = useRouter();
 

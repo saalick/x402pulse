@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Line, LineChart, ResponsiveContainer } from "recharts";
 import { Header } from "@/components/Header";
 import { CopyButton } from "@/components/CopyButton";
@@ -14,7 +14,17 @@ const MAX_WATCH = 5;
 const REFRESH_MS = 30_000;
 const ADDRESS_RE = /^0x[0-9a-f]{40}$/i;
 
+// Page wrapper — useSearchParams() must live inside a Suspense boundary
+// for Next.js App Router (otherwise build fails on static prerender).
 export default function WatchPage() {
+  return (
+    <Suspense fallback={null}>
+      <WatchBody />
+    </Suspense>
+  );
+}
+
+function WatchBody() {
   const router = useRouter();
   const params = useSearchParams();
 

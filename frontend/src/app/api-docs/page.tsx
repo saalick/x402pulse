@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   description: "Free, open API for x402 payment data on Base. No key required.",
 };
 
-const PROD_BASE = "https://api.x402pulse.xyz";
+const PROD_BASE = "https://api.x402pulse.app";
 const LOCAL_BASE = "http://localhost:8000";
 
 export default function ApiDocsPage() {

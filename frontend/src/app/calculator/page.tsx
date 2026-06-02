@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   Area,
@@ -31,7 +31,17 @@ const MONTHLY_GROWTH_MIN = -0.20;   // -20% / month
 const MONTHLY_GROWTH_MAX =  0.50;   // +50% / month
 const MONTHLY_GROWTH_FALLBACK = 0.15;
 
+// Page wrapper — useSearchParams() must live inside a Suspense boundary
+// for Next.js App Router (otherwise build fails on static prerender).
 export default function CalculatorPage() {
+  return (
+    <Suspense fallback={null}>
+      <CalculatorBody />
+    </Suspense>
+  );
+}
+
+function CalculatorBody() {
   const params = useSearchParams();
   const [price, setPrice] = useState<number>(
     Number(params.get("price")) || 0.01,
@@ -64,11 +74,10 @@ export default function CalculatorPage() {
     const v24 = health.components.volume.volume_24h;
     const vPrev = health.components.volume.volume_prev_24h;
     if (vPrev <= 0) return MONTHLY_GROWTH_FALLBACK;
-    // 24h-over-prior-24h compounded across ~30 days, then clamped.
+    // Treat the observed 24h-over-prior-24h ratio as the *monthly* growth
+    // signal (a heuristic that avoids absurd compounding when the indexer
+    // just backfilled), then clamp to the safe range.
     const dailyRatio = v24 / vPrev;
-    const monthlyRatio = Math.pow(dailyRatio, 1 / 1) * Math.pow(dailyRatio, 0); // identity, placeholder
-    // Treat the observed ratio as the *monthly* signal (a heuristic that
-    // avoids absurd compounding when the indexer just backfilled).
     const raw = dailyRatio - 1;
     return Math.max(MONTHLY_GROWTH_MIN, Math.min(MONTHLY_GROWTH_MAX, raw));
   }, [health]);

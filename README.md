@@ -3,7 +3,7 @@
 
 Real-time analytics dashboard for the x402 payment protocol on Base. Every USDC payment from an AI agent to an x402 facilitator, indexed live.
 
-🌐 Live at: x402pulse.xyz
+🌐 Live at: x402pulse.app
 
 ## What it does
 - Live volume tracking across all x402 facilitators
@@ -56,10 +56,10 @@ npm run dev
 Copy `.env.example` and fill in your values.
 
 ## API
-Free public API at api.x402pulse.xyz
-Full docs at x402pulse.xyz/api-docs
+Free public API at api.x402pulse.app
+Full docs at x402pulse.app/api-docs
 
 ## License
 MIT
 
-Built by @saalick | x402pulse.xyz
+Built by @saalick | x402pulse.app

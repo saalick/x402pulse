@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { api, HealthScore as HS } from "@/lib/api";
-import { CountUp } from "./CountUp";
 
 const REFRESH_MS = 60_000;
 

@@ -7,11 +7,11 @@ export const metadata: Metadata = {
   title: "x402pulse — The pulse of the agent economy",
   description:
     "Real-time analytics for x402 agent payments on Base. Track volume, agents, sellers, and live transfers.",
-  metadataBase: new URL("https://x402pulse.xyz"),
+  metadataBase: new URL("https://x402pulse.app"),
   openGraph: {
     title: "x402pulse",
     description: "The pulse of the agent economy.",
-    url: "https://x402pulse.xyz",
+    url: "https://x402pulse.app",
     siteName: "x402pulse",
     type: "website",
   },

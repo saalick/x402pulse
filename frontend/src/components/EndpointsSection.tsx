@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { CopyButton } from "./CopyButton";
 
-const PROD_BASE = "https://api.x402pulse.xyz";
+const PROD_BASE = "https://api.x402pulse.app";
 
 type Param = { name: string; type: string; default?: string; description: string };
 
