@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { CountUp } from "./CountUp";
 import { api, Stats } from "@/lib/api";
+import { shortDate } from "@/lib/format";
 
 const REFRESH_MS = 30_000;
 
@@ -31,19 +32,27 @@ export function StatsBar() {
     };
   }, []);
 
+  // "Total*" cards actually reflect the indexed data window, not all of
+  // x402 history. Sub-label shows the actual window so users aren't misled.
+  const since = stats?.data_window.since;
+  const days  = stats?.data_window.days ?? 0;
+  const totalSub = since
+    ? `since ${shortDate(since)} · ${days.toFixed(0)}d indexed`
+    : "indexing…";
+
   return (
     <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
       <StatCard
-        label="Total Volume"
-        sub="all time, USDC"
+        label="Volume"
+        sub={totalSub}
         value={stats?.total_volume_usdc ?? 0}
         prefix="$"
         decimals={2}
         compact
       />
       <StatCard
-        label="Total Transactions"
-        sub="all time"
+        label="Transactions"
+        sub={totalSub}
         value={stats?.total_transactions ?? 0}
       />
       <StatCard

@@ -11,6 +11,7 @@ import {
   formatUsdc,
   shortAddress,
   timeAgo,
+  timeAgoBounded,
 } from "@/lib/format";
 
 // Same posture as the agent page — totals shift block-by-block.
@@ -195,8 +196,12 @@ function StatGrid({ profile }: { profile: SellerProfile }) {
       />
       <Stat
         label="First Seen"
-        value={timeAgo(profile.first_seen)}
-        sub={absoluteDate(profile.first_seen)}
+        value={timeAgoBounded(profile.first_seen, profile.first_seen_bounded)}
+        sub={
+          profile.first_seen_bounded
+            ? `pinned to indexed window · ${absoluteDate(profile.first_seen)}`
+            : absoluteDate(profile.first_seen)
+        }
       />
       <Stat
         label="Last Seen"

@@ -13,6 +13,7 @@ import {
   formatUsdc,
   shortAddress,
   timeAgo,
+  timeAgoBounded,
 } from "@/lib/format";
 
 // Always fetch fresh — agent stats change as the indexer ingests new blocks.
@@ -238,8 +239,12 @@ function StatGrid({ profile }: { profile: AgentProfile }) {
       />
       <Stat
         label="First Seen"
-        value={timeAgo(profile.first_seen)}
-        sub={absoluteDate(profile.first_seen)}
+        value={timeAgoBounded(profile.first_seen, profile.first_seen_bounded)}
+        sub={
+          profile.first_seen_bounded
+            ? `pinned to indexed window · ${absoluteDate(profile.first_seen)}`
+            : absoluteDate(profile.first_seen)
+        }
       />
       <Stat
         label="Avg Payment"

@@ -34,6 +34,32 @@ export function timeAgo(unixSeconds: number, nowMs = Date.now()): string {
   return `${Math.floor(diff / 86_400)}d ago`;
 }
 
+/**
+ * Like `timeAgo`, but flags timestamps that are pinned to the edge of our
+ * indexed data window — the address likely existed before we started
+ * indexing, so the precise timestamp is misleading. Prefix `≥` + trailing `•`.
+ *
+ *   bounded=false → "5d ago"
+ *   bounded=true  → "≥30d ago •"
+ */
+export function timeAgoBounded(
+  unixSeconds: number,
+  bounded: boolean,
+  nowMs = Date.now(),
+): string {
+  const base = timeAgo(unixSeconds, nowMs);
+  return bounded ? `≥${base} •` : base;
+}
+
+/** Format a unix timestamp as a short calendar date — "May 3, 2026". */
+export function shortDate(unixSeconds: number): string {
+  return new Date(unixSeconds * 1000).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 /** basescan link helpers — used to make addresses/txes clickable. */
 export const basescanTx = (hash: string) => `https://basescan.org/tx/${hash}`;
 export const basescanAddress = (addr: string) => `https://basescan.org/address/${addr}`;

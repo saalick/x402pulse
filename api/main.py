@@ -113,6 +113,35 @@ def health(conn: sqlite3.Connection = Depends(get_db)) -> dict:
         "last_indexed_block": int(state[0]) if state else None,
     }
 
+# Per-request cache for the global MIN(timestamp) — used by the bounded-flag
+# check on /agent and /seller, and by /stats' data_window. Cheap query but no
+# point doing it twice per request.
+def _db_min_timestamp(conn: sqlite3.Connection) -> Optional[int]:
+    row = conn.execute("SELECT MIN(timestamp) FROM transfers").fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
+def _data_window(conn: sqlite3.Connection) -> dict:
+    """The actual time span of indexed data — what we ACTUALLY have."""
+    row = conn.execute(
+        "SELECT MIN(timestamp), MAX(timestamp), COUNT(*) FROM transfers"
+    ).fetchone()
+    if not row or row[0] is None:
+        return {"since": None, "until": None, "days": 0.0, "rows": 0}
+    return {
+        "since": int(row[0]),
+        "until": int(row[1]),
+        "days":  round((int(row[1]) - int(row[0])) / 86_400, 1),
+        "rows":  int(row[2]),
+    }
+
+
+# How close to the global MIN(timestamp) does an agent's first_seen need to
+# be for us to flag it as "bounded by our coverage"? Use 1 hour to allow for
+# blocks indexed in the same chunk as the earliest tx.
+BOUNDED_TOLERANCE_SECONDS = 3_600
+
+
 # ------------------------------------------------------------------ /stats
 
 @app.get("/stats")
@@ -132,12 +161,16 @@ def stats(conn: sqlite3.Connection = Depends(get_db)) -> dict:
     ).fetchone()
 
     return {
+        # NOTE: "total_*" here means "within data_window" — the indexer only
+        # has a bounded backfill, not all of x402 history. UIs should display
+        # data_window prominently so users know what's covered.
         "total_volume_usdc": float(total[0]),
         "total_transactions": int(total[1]),
         "volume_24h_usdc": float(day[0]),
         "transactions_24h": int(day[1]),
         "active_agents_24h": int(day[2]),
         "active_sellers_24h": int(day[3]),
+        "data_window": _data_window(conn),
     }
 
 # ------------------------------------------------------------------ /volume
@@ -1317,13 +1350,18 @@ def seller_profile(
         (addr,),
     ).fetchall()]
 
+    first_seen_ts = int(summary["first_seen"])
+    db_min = _db_min_timestamp(conn) or first_seen_ts
+    first_seen_bounded = (first_seen_ts - db_min) <= BOUNDED_TOLERANCE_SECONDS
+
     return {
         "address":            addr,
         "facilitator":        ADDRESS_TO_FACILITATOR.get(addr),
         "total_earned_usdc":  total,
         "total_transactions": txns,
         "avg_payment_usdc":   avg,
-        "first_seen":         int(summary["first_seen"]),
+        "first_seen":         first_seen_ts,
+        "first_seen_bounded": first_seen_bounded,
         "last_seen":          int(summary["last_seen"]),
         "unique_payers":      len(top_payers),  # at least; capped by LIMIT
         "top_payers":         top_payers,
@@ -1556,12 +1594,20 @@ def agent_profile(
     favorite_facilitator = facilitators[0]["name"] if facilitators else None
     is_new = (int(summary["first_seen"]) >= now_ts() - 86_400)
 
+    # Is this agent's first_seen pinned to the edge of our coverage window?
+    # If so, they probably existed before we started indexing — the UI should
+    # render the timestamp as "≥Nd ago" rather than implying it's accurate.
+    first_seen_ts = int(summary["first_seen"])
+    db_min = _db_min_timestamp(conn) or first_seen_ts
+    first_seen_bounded = (first_seen_ts - db_min) <= BOUNDED_TOLERANCE_SECONDS
+
     return {
         "address": addr,
         # primary names per Feature 2 spec
         "total_spent_usdc": total,
         "total_transactions": txns,
-        "first_seen": int(summary["first_seen"]),
+        "first_seen": first_seen_ts,
+        "first_seen_bounded": first_seen_bounded,
         "last_seen": int(summary["last_seen"]),
         "avg_payment_usdc": avg,
         "favorite_facilitator": favorite_facilitator,

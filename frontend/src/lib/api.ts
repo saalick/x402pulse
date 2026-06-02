@@ -8,6 +8,13 @@
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
+export type DataWindow = {
+  since: number | null;   // unix seconds, oldest indexed tx
+  until: number | null;   // unix seconds, newest indexed tx
+  days: number;
+  rows: number;
+};
+
 export type Stats = {
   total_volume_usdc: number;
   total_transactions: number;
@@ -15,6 +22,7 @@ export type Stats = {
   transactions_24h: number;
   active_agents_24h: number;
   active_sellers_24h: number;
+  data_window: DataWindow;
 };
 
 export type VolumePoint = {
@@ -67,6 +75,7 @@ export type AgentProfile = {
   total_spent_usdc: number;
   total_transactions: number;
   first_seen: number;
+  first_seen_bounded: boolean;
   last_seen: number;
   avg_payment_usdc: number;
   favorite_facilitator: string | null;
@@ -221,6 +230,7 @@ export type SellerProfile = {
   total_transactions: number;
   avg_payment_usdc: number;
   first_seen: number;
+  first_seen_bounded: boolean;
   last_seen: number;
   unique_payers: number;
   top_payers: AgentRow[];

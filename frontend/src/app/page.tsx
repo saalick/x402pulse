@@ -8,6 +8,7 @@ import { Leaderboards } from "@/components/Leaderboards";
 import { LiveFeed } from "@/components/LiveFeed";
 import { NewAgentsFeed } from "@/components/NewAgentsFeed";
 import { AlertBanner } from "@/components/AlertBanner";
+import { DataWindowFooter } from "@/components/DataWindowFooter";
 import { FacilitatorBreakdown } from "@/components/FacilitatorBreakdown";
 import { FacilitatorRace } from "@/components/FacilitatorRace";
 
@@ -30,6 +31,7 @@ export default function Page() {
           <LiveFeed />
           <NewAgentsFeed />
         </div>
+        <DataWindowFooter />
         <Footer />
       </main>
     </>
