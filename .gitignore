@@ -1,0 +1,37 @@
+# env / secrets
+.env
+.env.local
+.env.production.local
+.env.*.local
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# data
+x402pulse.db
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# logs
+*.log
+indexer.log
+api.log
+
+# node / next
+node_modules/
+.next/
+out/
+.vercel
+dist/
+build/
+
+# editors / OS / tooling
+.DS_Store
+.idea/
+.vscode/
+.claude/

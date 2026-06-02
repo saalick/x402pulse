@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./x402pulse.db:/app/x402pulse.db
+    env_file:
+      - .env
+    restart: always
+
+  indexer:
+    build: .
+    command: python indexer/main.py
+    volumes:
+      - ./x402pulse.db:/app/x402pulse.db
+    env_file:
+      - .env
+    restart: always
+    depends_on:
+      - api
