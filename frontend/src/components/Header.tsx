@@ -14,19 +14,20 @@ const NAV: NavLink[] = [
   { href: "/map",         label: "Map" },
   { href: "/report",      label: "Report" },
   { href: "/watch",       label: "Watchlist" },
-  { href: "/calculator",  label: "Calculator" },
   { href: "/api-docs",    label: "API" },
   { href: "https://github.com/saalick/x402pulse", label: "GitHub ↗", external: true },
 ];
 
 /**
- * Top navigation: logo, search bar, LIVE indicator, nav links.
- * Sticky with backdrop blur — sits over the main content as it scrolls.
+ * Top navigation: logo, LIVE indicator, nav links.
  *
  * Layout:
- *   - lg+        full row: logo · search · live badge · nav links
+ *   - lg+        full row: logo · live badge · nav links
  *   - below lg   compact: logo · live badge · hamburger
- *                hamburger opens a dropdown with search + all nav links
+ *                hamburger opens a dropdown with all nav links
+ *
+ * The site-wide search bar lives in its own strip below the header
+ * (see SearchBarStrip / layout.tsx) so it gets the full width treatment.
  */
 export function Header() {
   const [open, setOpen] = useState(false);
@@ -44,7 +45,8 @@ export function Header() {
   }, [open]);
 
   return (
-    <header className="sticky top-0 z-40 border-b border-white/5 bg-bg/80 backdrop-blur-md">
+    <div className="sticky top-0 z-40">
+    <header className="border-b border-white/5 bg-bg/80 backdrop-blur-md">
       <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:gap-5 sm:px-6 lg:h-16">
         <Link
           href="/"
@@ -60,11 +62,6 @@ export function Header() {
             className="h-8 w-auto sm:h-9 lg:h-10"
           />
         </Link>
-
-        {/* Search bar — visible on lg+. On mobile it lives inside the menu. */}
-        <div className="hidden lg:order-none lg:block lg:flex-1 lg:max-w-[320px]">
-          <SearchBar />
-        </div>
 
         <div className="ml-auto flex items-center gap-3 sm:gap-5">
           <LiveBadge />
@@ -90,22 +87,27 @@ export function Header() {
       {/* Mobile dropdown panel */}
       {open && (
         <div className="border-t border-white/5 bg-bg/95 backdrop-blur-md lg:hidden">
-          <div className="mx-auto max-w-7xl space-y-3 px-4 py-4 sm:px-6">
-            <SearchBar />
-            <nav className="grid grid-cols-2 gap-2 pt-1">
-              {NAV.map((n) => (
-                <NavItem
-                  key={n.href}
-                  link={n}
-                  active={pathname === n.href}
-                  variant="block"
-                />
-              ))}
-            </nav>
-          </div>
+          <nav className="mx-auto grid max-w-7xl grid-cols-2 gap-2 px-4 py-4 sm:px-6">
+            {NAV.map((n) => (
+              <NavItem
+                key={n.href}
+                link={n}
+                active={pathname === n.href}
+                variant="block"
+              />
+            ))}
+          </nav>
         </div>
       )}
     </header>
+
+    {/* Site-wide search strip — sticky with the header above it. */}
+    <div className="border-b border-white/5 bg-bg/70 backdrop-blur-md">
+      <div className="mx-auto max-w-3xl px-4 py-3 sm:px-6 sm:py-4">
+        <SearchBar />
+      </div>
+    </div>
+    </div>
   );
 }
 

@@ -110,10 +110,10 @@ export function SearchBar() {
   const showDropdown = open && q.trim().length >= 3;
 
   return (
-    <div ref={wrapRef} className="relative w-full sm:w-[280px]">
+    <div ref={wrapRef} className="relative w-full">
       <form onSubmit={onSubmit} role="search">
         <div className="relative">
-          <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/40" />
+          <SearchIcon className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
           <input
             type="text"
             value={q}
@@ -125,10 +125,10 @@ export function SearchBar() {
             autoCorrect="off"
             autoCapitalize="off"
             aria-label="Search wallet address"
-            className="w-full rounded-md border border-white/10 bg-white/[0.03] py-1.5 pl-8 pr-9 font-mono text-xs text-white/90 placeholder-white/30 outline-none transition focus:border-brand/50 focus:bg-white/[0.04] focus:shadow-[0_0_0_3px_rgba(0,255,136,0.12)]"
+            className="w-full rounded-lg border border-white/10 bg-white/[0.03] py-3 pl-10 pr-11 font-mono text-sm text-white/90 placeholder-white/30 outline-none transition focus:border-brand/50 focus:bg-white/[0.04] focus:shadow-[0_0_0_3px_rgba(0,255,136,0.12)]"
           />
           {loading && (
-            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-white/40">
+            <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-[11px] text-white/40">
               …
             </span>
           )}

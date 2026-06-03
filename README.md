@@ -13,7 +13,6 @@ Real-time analytics dashboard for the x402 payment protocol on Base. Every USDC 
 - Ecosystem Map (D3 force graph)
 - Spike/anomaly detection
 - Daily report with PNG export
-- Revenue calculator for x402 sellers
 - Wallet watchlist
 - Public API (no key required)
 
