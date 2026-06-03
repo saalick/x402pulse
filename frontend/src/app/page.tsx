@@ -19,9 +19,9 @@ export default function Page() {
         <Hero />
         <AlertBanner />
         <HealthScore />
+        <StatsBar />
         <LivePulse />
         <FacilitatorBreakdown />
-        <StatsBar />
         <VolumeChart />
         <PaymentSizeDistribution />
         <Leaderboards />
