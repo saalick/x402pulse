@@ -7,7 +7,6 @@ import { VolumeChart } from "@/components/VolumeChart";
 import { Leaderboards } from "@/components/Leaderboards";
 import { LiveFeed } from "@/components/LiveFeed";
 import { NewAgentsFeed } from "@/components/NewAgentsFeed";
-import { AlertBanner } from "@/components/AlertBanner";
 import { DataWindowFooter } from "@/components/DataWindowFooter";
 import { FacilitatorBreakdown } from "@/components/FacilitatorBreakdown";
 
@@ -17,7 +16,6 @@ export default function Page() {
       <Header />
       <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 sm:py-8">
         <Hero />
-        <AlertBanner />
         <HealthScore />
         <StatsBar />
         <LivePulse />
