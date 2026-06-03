@@ -10,7 +10,6 @@ import { NewAgentsFeed } from "@/components/NewAgentsFeed";
 import { AlertBanner } from "@/components/AlertBanner";
 import { DataWindowFooter } from "@/components/DataWindowFooter";
 import { FacilitatorBreakdown } from "@/components/FacilitatorBreakdown";
-import { FacilitatorRace } from "@/components/FacilitatorRace";
 
 export default function Page() {
   return (
@@ -20,12 +19,11 @@ export default function Page() {
         <Hero />
         <AlertBanner />
         <HealthScore />
+        <LivePulse />
         <FacilitatorBreakdown />
-        <FacilitatorRace />
         <StatsBar />
         <VolumeChart />
         <PaymentSizeDistribution />
-        <LivePulse />
         <Leaderboards />
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <LiveFeed />
