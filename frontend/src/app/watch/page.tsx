@@ -9,6 +9,7 @@ import { CopyButton } from "@/components/CopyButton";
 import { FacilitatorBadge } from "@/components/Leaderboards";
 import { api, type WatchedAddress } from "@/lib/api";
 import { formatUsdc, shortAddress, timeAgo } from "@/lib/format";
+import { useBrandColor } from "@/lib/useBrandColor";
 
 const MAX_WATCH = 5;
 const REFRESH_MS = 30_000;
@@ -110,7 +111,7 @@ function WatchBody() {
 
         <section className="card space-y-3 p-5 shadow-card animate-fade-in-up">
           <div className="flex flex-wrap items-stretch gap-2">
-            <div className="flex flex-1 items-stretch overflow-hidden rounded-md border border-white/10 bg-white/[0.03] focus-within:border-brand/50 focus-within:shadow-[0_0_0_3px_rgba(0,255,136,0.12)]">
+            <div className="flex flex-1 items-stretch overflow-hidden rounded-md border border-white/10 bg-white/[0.03] focus-within:border-brand/50 focus-within:shadow-[0_0_0_3px_rgb(var(--brand-rgb)/0.12)]">
               <input
                 type="text"
                 value={input}
@@ -202,6 +203,7 @@ function WatchCard({
   loading: boolean;
   onRemove: () => void;
 }) {
+  const brand = useBrandColor();
   return (
     <div className="card space-y-3 p-4 shadow-card animate-fade-in-up">
       <div className="flex items-start justify-between gap-3">
@@ -249,7 +251,7 @@ function WatchCard({
                 <Line
                   type="monotone"
                   dataKey="volume"
-                  stroke="#00ff88"
+                  stroke={brand}
                   strokeWidth={1.5}
                   dot={false}
                   isAnimationActive={false}

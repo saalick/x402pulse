@@ -149,7 +149,7 @@ export function LivePulse() {
   const areaPath = `${topPath} L ${W} ${baseline} L 0 ${baseline} Z`;
 
   return (
-    <section className="card overflow-hidden p-5 shadow-card animate-fade-in-up">
+    <section className="card overflow-hidden p-5 shadow-card animate-fade-in-up text-brand">
       <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-sm font-medium uppercase tracking-[0.18em] text-white/50">
@@ -191,13 +191,13 @@ export function LivePulse() {
         >
           <defs>
             <linearGradient id="pulseFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%"   stopColor="#00ff88" stopOpacity={0.32} />
-              <stop offset="100%" stopColor="#00ff88" stopOpacity={0} />
+              <stop offset="0%"   stopColor="currentColor" stopOpacity={0.32} />
+              <stop offset="100%" stopColor="currentColor" stopOpacity={0} />
             </linearGradient>
             <linearGradient id="pulseStroke" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%"   stopColor="#00ff88" stopOpacity={0.15} />
-              <stop offset="70%"  stopColor="#00ff88" stopOpacity={0.85} />
-              <stop offset="100%" stopColor="#00ff88" stopOpacity={1} />
+              <stop offset="0%"   stopColor="currentColor" stopOpacity={0.15} />
+              <stop offset="70%"  stopColor="currentColor" stopOpacity={0.85} />
+              <stop offset="100%" stopColor="currentColor" stopOpacity={1} />
             </linearGradient>
             <filter id="pulseGlow" x="-20%" y="-20%" width="140%" height="140%">
               <feGaussianBlur stdDeviation="2.2" />
@@ -206,7 +206,7 @@ export function LivePulse() {
 
           <line
             x1={0} x2={W} y1={baseline} y2={baseline}
-            stroke="rgba(255,255,255,0.06)"
+            stroke="rgb(var(--fg-rgb) / 0.08)"
             strokeWidth={1}
             strokeDasharray="3 6"
           />
@@ -215,7 +215,7 @@ export function LivePulse() {
 
           <path
             d={topPath}
-            stroke="#00ff88"
+            stroke="currentColor"
             strokeWidth={2.4}
             strokeOpacity={0.45}
             fill="none"
@@ -236,7 +236,7 @@ export function LivePulse() {
             cx={W - 6}
             cy={baseline - (Math.min(1.6, samples[samples.length - 1]) / 1.6) * peakRange}
             r={4.5}
-            fill="#00ff88"
+            fill="currentColor"
           />
         </svg>
 
@@ -250,7 +250,7 @@ export function LivePulse() {
             return (
               <div
                 key={p.id}
-                className="flex items-center gap-2 rounded-md border border-brand/30 bg-bg/80 px-2.5 py-1 shadow-[0_0_12px_rgba(0,255,136,0.18)] backdrop-blur-sm"
+                className="flex items-center gap-2 rounded-md border border-brand/30 bg-bg/80 px-2.5 py-1 shadow-brand-glow-sm backdrop-blur-sm"
                 style={{
                   opacity,
                   transform: `translateX(${translateX}px)`,

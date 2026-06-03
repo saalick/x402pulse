@@ -12,15 +12,15 @@ const MAX_SCORE = 850;
 
 // Calibrated to the score-label thresholds in api/main.py.
 const SCORE_COLORS: Array<{ max: number; hex: string }> = [
-  { max: 1,   hex: "#9ca3af" },  // 0 = grey
-  { max: 300, hex: "#ff4d4d" },  // New Agent — red
-  { max: 500, hex: "#ff9333" },  // Developing — orange
-  { max: 650, hex: "#f0d030" },  // Established — yellow
-  { max: 750, hex: "#00ff88" },  // Trusted — brand
-  { max: 851, hex: "#66ffb2" },  // Elite — bright
+  { max: 1,   hex: "#9ca3af" },             // 0 = grey
+  { max: 300, hex: "#ff4d4d" },             // New Agent — red
+  { max: 500, hex: "#ff9333" },             // Developing — orange
+  { max: 650, hex: "#f0d030" },             // Established — yellow
+  { max: 750, hex: "var(--brand-hex)" },    // Trusted — brand
+  { max: 851, hex: "var(--brand-hex)" },    // Elite — brand
 ];
 const colorForScore = (s: number) =>
-  SCORE_COLORS.find((c) => s < c.max)?.hex ?? "#66ffb2";
+  SCORE_COLORS.find((c) => s < c.max)?.hex ?? "var(--brand-hex)";
 
 // Page wrapper — useSearchParams() must live inside a Suspense boundary
 // for Next.js App Router (otherwise build fails on static prerender).
@@ -161,7 +161,7 @@ function SearchSection({
           spellCheck={false}
           autoCorrect="off"
           autoCapitalize="off"
-          className="min-w-0 flex-1 rounded-md border border-white/10 bg-white/[0.03] px-3 py-3 font-mono text-sm text-white/90 placeholder-white/30 outline-none transition focus:border-brand/50 focus:bg-white/[0.04] focus:shadow-[0_0_0_3px_rgba(0,255,136,0.12)]"
+          className="min-w-0 flex-1 rounded-md border border-white/10 bg-white/[0.03] px-3 py-3 font-mono text-sm text-white/90 placeholder-white/30 outline-none transition focus:border-brand/50 focus:bg-white/[0.04] focus:shadow-[0_0_0_3px_rgb(var(--brand-rgb)/0.12)]"
         />
         <button
           type="submit"
@@ -312,7 +312,7 @@ function BreakdownGrid({ score }: { score: TrustScore }) {
                   className="h-full rounded-full bg-brand transition-[width] duration-700"
                   style={{
                     width: `${pct}%`,
-                    background: "linear-gradient(90deg, rgba(0,255,136,0.5), #00ff88)",
+                    background: "linear-gradient(90deg, rgb(var(--brand-rgb) / 0.5), rgb(var(--brand-rgb)))",
                   }}
                 />
               </div>

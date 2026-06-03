@@ -3,21 +3,24 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, AgentRow, SellerRow, TrustScore } from "@/lib/api";
-import { basescanAddress, formatUsdc, shortAddress, timeAgo } from "@/lib/format";
+import { formatUsdc, shortAddress, timeAgo } from "@/lib/format";
 
 const REFRESH_MS = 30_000;
 
 // Calibrated to the score-label thresholds in api/main.py.
+// Top-two tiers use the theme's brand var so the "good" colour
+// stays green in dark and Coinbase blue in light.
+const BRAND = "var(--brand-hex)";
 const SCORE_PALETTE: Array<{ max: number; hex: string }> = [
   { max: 1,   hex: "#9ca3af" },
   { max: 300, hex: "#ff4d4d" },
   { max: 500, hex: "#ff9333" },
   { max: 650, hex: "#f0d030" },
-  { max: 750, hex: "#00ff88" },
-  { max: 851, hex: "#66ffb2" },
+  { max: 750, hex: BRAND },
+  { max: 851, hex: BRAND },
 ];
 const scoreColor = (s: number) =>
-  SCORE_PALETTE.find((c) => s < c.max)?.hex ?? "#66ffb2";
+  SCORE_PALETTE.find((c) => s < c.max)?.hex ?? BRAND;
 
 export function Leaderboards() {
   const [agents, setAgents] = useState<AgentRow[]>([]);
@@ -92,7 +95,7 @@ function BoardCard({
   rows: BoardRow[];
   amountLabel: string;
   showFacilitator?: boolean;
-  /** "agent" → internal /agent/[address] link, "external" → basescan */
+  /** "agent" → /agent/[address], "external" → /seller/[address] */
   addressKind: "agent" | "external";
   /** When provided, render a Score column (Top Agents only). */
   scoreMap?: Map<string, TrustScore>;
@@ -137,23 +140,12 @@ function BoardCard({
                   <td className="px-3 py-2 text-xs text-white/40 tabular">{i + 1}</td>
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-2">
-                      {addressKind === "agent" ? (
-                        <Link
-                          href={`/agent/${r.address}`}
-                          className="font-mono text-xs text-white/85 hover:text-brand"
-                        >
-                          {shortAddress(r.address)}
-                        </Link>
-                      ) : (
-                        <a
-                          href={basescanAddress(r.address)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="font-mono text-xs text-white/85 hover:text-brand"
-                        >
-                          {shortAddress(r.address)}
-                        </a>
-                      )}
+                      <Link
+                        href={addressKind === "agent" ? `/agent/${r.address}` : `/seller/${r.address}`}
+                        className="font-mono text-xs text-white/85 hover:text-brand"
+                      >
+                        {shortAddress(r.address)}
+                      </Link>
                       {showFacilitator && "facilitator" in r && (
                         <FacilitatorBadge name={(r as SellerRow).facilitator} />
                       )}

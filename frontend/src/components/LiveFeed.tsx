@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, FeedRow } from "@/lib/api";
 import {
-  basescanAddress,
   basescanTx,
   formatUsdc,
   shortAddress,
@@ -94,15 +93,13 @@ function FeedItem({ row, fresh }: { row: FeedRow; fresh: boolean }) {
               {shortAddress(row.from_address)}
             </Link>
             <span className="text-white/30">→</span>
-            <a
-              href={basescanAddress(row.to_address)}
-              target="_blank"
-              rel="noopener noreferrer"
+            <Link
+              href={`/seller/${row.to_address}`}
               className="truncate text-white/80 hover:text-brand"
-              title={row.to_address}
+              title={`${row.to_address} — seller profile`}
             >
               {shortAddress(row.to_address)}
-            </a>
+            </Link>
           </div>
           <a
             href={basescanTx(row.tx_hash)}

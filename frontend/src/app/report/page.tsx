@@ -124,7 +124,7 @@ const ReportCard = forwardRef<HTMLDivElement, { report: DailyReport | null }>(
       return (
         <div
           ref={ref}
-          className="card mx-auto grid h-[640px] w-full max-w-[600px] place-items-center text-xs text-white/40 shadow-[0_0_60px_rgba(0,255,136,0.08)]"
+          className="card mx-auto grid h-[640px] w-full max-w-[600px] place-items-center text-xs text-white/40 shadow-[0_0_60px_rgb(var(--brand-rgb)/0.08)]"
         >
           Loading report…
         </div>
@@ -138,8 +138,8 @@ const ReportCard = forwardRef<HTMLDivElement, { report: DailyReport | null }>(
     return (
       <div
         ref={ref}
-        className="mx-auto w-full max-w-[600px] rounded-2xl border border-brand/25 bg-bg p-6 shadow-[0_0_60px_rgba(0,255,136,0.10)]"
-        style={{ backgroundImage: "radial-gradient(800px 400px at 50% -120px, rgba(0,255,136,0.10), transparent 60%)" }}
+        className="mx-auto w-full max-w-[600px] rounded-2xl border border-brand/25 bg-bg p-6 shadow-[0_0_60px_rgb(var(--brand-rgb)/0.10)]"
+        style={{ backgroundImage: "radial-gradient(800px 400px at 50% -120px, rgb(var(--brand-rgb) / 0.10), transparent 60%)" }}
       >
         <div className="flex items-baseline justify-between text-[10px] uppercase tracking-[0.18em] text-white/40">
           <span>x402 Daily Report</span>

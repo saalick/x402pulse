@@ -15,11 +15,14 @@ import {
 } from "recharts";
 import { api, type Distribution } from "@/lib/api";
 import { formatUsdc } from "@/lib/format";
+import { useBrandColor, useThemeMode } from "@/lib/useBrandColor";
 
 const REFRESH_MS = 60_000;
 
-// Sequential green palette for the pie segments — dark to bright.
-const SEGMENT_COLORS = ["#003522", "#005c39", "#008451", "#00bf6f", "#00ff88"];
+// Sequential brand palette — dark→bright green in dark, dim→saturated
+// Coinbase blue in light. Sorted by perceptual lightness in their hue.
+const DARK_SEGMENTS  = ["#003522", "#005c39", "#008451", "#00bf6f", "#00ff88"];
+const LIGHT_SEGMENTS = ["#bcd0ff", "#7aa0ff", "#3a70ff", "#0e57f1", "#0040c8"];
 
 export function PaymentSizeDistribution() {
   const [data, setData] = useState<Distribution | null>(null);
@@ -73,6 +76,7 @@ export function PaymentSizeDistribution() {
 }
 
 function BarPanel({ buckets }: { buckets: Distribution["buckets"] }) {
+  const brand = useBrandColor();
   return (
     <div>
       <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-white/40">
@@ -81,28 +85,28 @@ function BarPanel({ buckets }: { buckets: Distribution["buckets"] }) {
       <div className="mt-2 h-64 w-full">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={buckets} margin={{ top: 8, right: 8, left: 0, bottom: 24 }}>
-            <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
+            <CartesianGrid stroke="rgb(var(--fg-rgb) / 0.06)" vertical={false} />
             <XAxis
               dataKey="label"
               tickFormatter={(s: string) => shortLabel(s)}
-              stroke="rgba(255,255,255,0.3)"
+              stroke="rgb(var(--fg-rgb) / 0.3)"
               fontSize={11}
               tickLine={false}
               axisLine={false}
               interval={0}
             />
             <YAxis
-              stroke="rgba(255,255,255,0.3)"
+              stroke="rgb(var(--fg-rgb) / 0.3)"
               fontSize={11}
               tickLine={false}
               axisLine={false}
               width={48}
               tickFormatter={(v: number) => Intl.NumberFormat("en", { notation: "compact" }).format(v)}
             />
-            <Tooltip content={<BarTooltip />} cursor={{ fill: "rgba(0,255,136,0.08)" }} />
+            <Tooltip content={<BarTooltip />} cursor={{ fill: "rgb(var(--brand-rgb) / 0.08)" }} />
             <Bar
               dataKey="count"
-              fill="#00ff88"
+              fill={brand}
               radius={[4, 4, 0, 0]}
               isAnimationActive={false}
             />
@@ -115,6 +119,8 @@ function BarPanel({ buckets }: { buckets: Distribution["buckets"] }) {
 
 function PiePanel({ buckets }: { buckets: Distribution["buckets"] }) {
   const totalVolume = buckets.reduce((s, b) => s + b.volume_usdc, 0) || 1;
+  const mode = useThemeMode();
+  const palette = mode === "light" ? LIGHT_SEGMENTS : DARK_SEGMENTS;
   return (
     <div>
       <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-white/40">
@@ -135,7 +141,7 @@ function PiePanel({ buckets }: { buckets: Distribution["buckets"] }) {
                 isAnimationActive={false}
               >
                 {buckets.map((_, i) => (
-                  <Cell key={i} fill={SEGMENT_COLORS[i % SEGMENT_COLORS.length]} />
+                  <Cell key={i} fill={palette[i % palette.length]} />
                 ))}
               </Pie>
               <Tooltip content={<PieTooltip total={totalVolume} />} />
@@ -146,7 +152,7 @@ function PiePanel({ buckets }: { buckets: Distribution["buckets"] }) {
           {buckets.map((b, i) => (
             <li key={b.label} className="flex items-center justify-between gap-2">
               <span className="inline-flex items-center gap-2 truncate">
-                <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: SEGMENT_COLORS[i] }} />
+                <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: palette[i] }} />
                 <span className="truncate text-white/70">{shortLabel(b.label)}</span>
               </span>
               <span className="shrink-0 tabular text-white/60">

@@ -22,6 +22,22 @@ export const metadata: Metadata = {
   },
 };
 
+/**
+ * Inline theme bootstrap — runs before paint so the chosen theme
+ * is applied to <html> with no flash of the wrong one.
+ * Honours localStorage first, then prefers-color-scheme.
+ */
+const themeBoot = `
+(function(){
+  try {
+    var stored = localStorage.getItem('x402pulse:theme');
+    var prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+    var useLight = stored === 'light' || (!stored && prefersLight);
+    if (useLight) document.documentElement.classList.add('light');
+  } catch (e) {}
+})();
+`;
+
 export default function RootLayout({
   children,
 }: {
@@ -29,6 +45,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBoot }} />
+      </head>
       <body className="min-h-screen bg-bg text-white antialiased">{children}</body>
     </html>
   );

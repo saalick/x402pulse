@@ -125,7 +125,7 @@ export function SearchBar() {
             autoCorrect="off"
             autoCapitalize="off"
             aria-label="Search wallet address"
-            className="w-full rounded-lg border border-white/10 bg-white/[0.03] py-3 pl-10 pr-11 font-mono text-sm text-white/90 placeholder-white/30 outline-none transition focus:border-brand/50 focus:bg-white/[0.04] focus:shadow-[0_0_0_3px_rgba(0,255,136,0.12)]"
+            className="w-full rounded-lg border border-white/10 bg-white/[0.03] py-3 pl-10 pr-11 font-mono text-sm text-white/90 placeholder-white/30 outline-none transition focus:border-brand/50 focus:bg-white/[0.04] focus:shadow-[0_0_0_3px_rgb(var(--brand-rgb)/0.12)]"
           />
           {loading && (
             <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-[11px] text-white/40">

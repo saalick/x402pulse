@@ -5,12 +5,15 @@ import { api, HealthScore as HS } from "@/lib/api";
 
 const REFRESH_MS = 60_000;
 
+// "Strong" and "Excellent" tiers track the theme's brand var so they
+// stay green in dark and Coinbase blue in light.
+const BRAND = "var(--brand-hex)";
 const COLORS = [
   { max: 40, hex: "#ff4d4d" },   // Critical
   { max: 60, hex: "#ff9333" },   // Fair
   { max: 80, hex: "#f0d030" },   // Good (yellow)
-  { max: 90, hex: "#00ff88" },   // Strong (brand)
-  { max: 101, hex: "#66ffb2" },  // Excellent (bright)
+  { max: 90, hex: BRAND },       // Strong (brand)
+  { max: 101, hex: BRAND },      // Excellent (brand)
 ];
 
 function colorFor(score: number): string {
@@ -129,7 +132,7 @@ function Gauge({ score, color }: { score: number; color: string }) {
       {/* track */}
       <path
         d={arcPath}
-        stroke="rgba(255,255,255,0.06)"
+        stroke="rgb(var(--fg-rgb) / 0.08)"
         strokeWidth={10}
         strokeLinecap="round"
         fill="none"
@@ -165,7 +168,7 @@ function Gauge({ score, color }: { score: number; color: string }) {
         textAnchor="middle"
         fontSize="9"
         fontFamily="var(--font-geist-mono), monospace"
-        fill="rgba(255,255,255,0.35)"
+        fill="rgb(var(--fg-rgb) / 0.35)"
         style={{ letterSpacing: "0.18em" }}
       >
         / 100

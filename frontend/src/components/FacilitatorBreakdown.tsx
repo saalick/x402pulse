@@ -110,8 +110,8 @@ function ShareRow({ row, max }: { row: FacilitatorStats; max: number }) {
           className="h-full rounded-full bg-brand transition-[width] duration-700"
           style={{
             width: `${widthPct}%`,
-            background: "linear-gradient(90deg, rgba(0,255,136,0.6), #00ff88)",
-            boxShadow: "0 0 12px rgba(0,255,136,0.35)",
+            background: "linear-gradient(90deg, rgb(var(--brand-rgb) / 0.6), rgb(var(--brand-rgb)))",
+            boxShadow: "0 0 12px rgb(var(--brand-rgb) / 0.35)",
           }}
         />
       </div>

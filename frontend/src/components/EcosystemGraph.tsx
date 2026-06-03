@@ -82,7 +82,7 @@ export function EcosystemGraph({ initialData }: { initialData: MapData | null })
       .selectAll("line")
       .data(edges)
       .join("line")
-      .attr("stroke", "rgba(255,255,255,0.18)")
+      .attr("stroke", "rgb(var(--fg-rgb) / 0.18)")
       .attr("stroke-width", (d) => wScale(d.weight))
       .attr("stroke-linecap", "round");
 
@@ -221,7 +221,7 @@ export function EcosystemGraph({ initialData }: { initialData: MapData | null })
         </button>
       </div>
 
-      <div className="relative overflow-hidden rounded-lg border border-white/5 bg-[#070707]">
+      <div className="relative overflow-hidden rounded-lg border border-white/5 bg-bg">
         {/* Mobile: shorter so it doesn't dominate the viewport. Desktop: 560. */}
         <svg
           ref={svgRef}

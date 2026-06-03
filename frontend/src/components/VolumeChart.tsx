@@ -12,6 +12,7 @@ import {
 } from "recharts";
 import { api, Period, VolumePoint } from "@/lib/api";
 import { formatUsdc } from "@/lib/format";
+import { useBrandColor } from "@/lib/useBrandColor";
 
 const REFRESH_MS = 30_000;
 const PERIODS: Period[] = ["1h", "24h", "7d"];
@@ -20,6 +21,7 @@ export function VolumeChart() {
   const [period, setPeriod] = useState<Period>("24h");
   const [data, setData] = useState<VolumePoint[]>([]);
   const [loading, setLoading] = useState(true);
+  const brand = useBrandColor();
 
   useEffect(() => {
     let cancelled = false;
@@ -75,32 +77,32 @@ export function VolumeChart() {
             <AreaChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="volGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#00ff88" stopOpacity={0.45} />
-                  <stop offset="100%" stopColor="#00ff88" stopOpacity={0} />
+                  <stop offset="0%" stopColor={brand} stopOpacity={0.45} />
+                  <stop offset="100%" stopColor={brand} stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
+              <CartesianGrid stroke="rgb(var(--fg-rgb) / 0.06)" vertical={false} />
               <XAxis
                 dataKey="timestamp"
                 tickFormatter={(t) => fmtTick(t, period)}
-                stroke="rgba(255,255,255,0.3)"
+                stroke="rgb(var(--fg-rgb) / 0.3)"
                 fontSize={11}
                 tickLine={false}
                 axisLine={false}
               />
               <YAxis
-                stroke="rgba(255,255,255,0.3)"
+                stroke="rgb(var(--fg-rgb) / 0.3)"
                 fontSize={11}
                 tickFormatter={(v) => `$${formatUsdc(v, true)}`}
                 tickLine={false}
                 axisLine={false}
                 width={56}
               />
-              <Tooltip content={<ChartTooltip period={period} />} cursor={{ stroke: "rgba(0,255,136,0.3)" }} />
+              <Tooltip content={<ChartTooltip period={period} />} cursor={{ stroke: `rgb(var(--brand-rgb) / 0.3)` }} />
               <Area
                 type="monotone"
                 dataKey="volume"
-                stroke="#00ff88"
+                stroke={brand}
                 strokeWidth={2}
                 fill="url(#volGradient)"
                 isAnimationActive={false}

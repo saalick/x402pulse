@@ -11,10 +11,12 @@ import {
 } from "recharts";
 import { AgentHourPoint } from "@/lib/api";
 import { formatUsdc } from "@/lib/format";
+import { useBrandColor } from "@/lib/useBrandColor";
 
 /** 24-bar hourly spend chart for the agent profile. */
 export function AgentHourlyChart({ data }: { data: AgentHourPoint[] }) {
   const total = data.reduce((s, p) => s + p.volume, 0);
+  const brand = useBrandColor();
   if (total === 0) {
     return (
       <div className="grid h-56 place-items-center text-xs text-white/40">
@@ -26,28 +28,28 @@ export function AgentHourlyChart({ data }: { data: AgentHourPoint[] }) {
     <div className="h-56 w-full">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-          <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
+          <CartesianGrid stroke="rgb(var(--fg-rgb) / 0.06)" vertical={false} />
           <XAxis
             dataKey="hour"
             tickFormatter={fmtHourTick}
-            stroke="rgba(255,255,255,0.3)"
+            stroke="rgb(var(--fg-rgb) / 0.3)"
             fontSize={11}
             tickLine={false}
             axisLine={false}
             interval={3}
           />
           <YAxis
-            stroke="rgba(255,255,255,0.3)"
+            stroke="rgb(var(--fg-rgb) / 0.3)"
             fontSize={11}
             tickFormatter={(v) => `$${formatUsdc(v, true)}`}
             tickLine={false}
             axisLine={false}
             width={56}
           />
-          <Tooltip content={<BarTooltip />} cursor={{ fill: "rgba(0,255,136,0.08)" }} />
+          <Tooltip content={<BarTooltip />} cursor={{ fill: "rgb(var(--brand-rgb) / 0.08)" }} />
           <Bar
             dataKey="volume"
-            fill="#00ff88"
+            fill={brand}
             radius={[4, 4, 0, 0]}
             isAnimationActive={false}
           />

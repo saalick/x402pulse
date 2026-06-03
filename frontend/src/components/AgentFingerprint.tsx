@@ -11,6 +11,7 @@ import {
   Tooltip,
 } from "recharts";
 import { api, Fingerprint } from "@/lib/api";
+import { useBrandColor } from "@/lib/useBrandColor";
 
 /**
  * Five-axis fingerprint radar for a single agent. Loads /agent/{addr}/fingerprint
@@ -20,6 +21,7 @@ import { api, Fingerprint } from "@/lib/api";
 export function AgentFingerprint({ address }: { address: string }) {
   const [data, setData] = useState<Fingerprint | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const brand = useBrandColor();
 
   useEffect(() => {
     let cancelled = false;
@@ -60,24 +62,24 @@ export function AgentFingerprint({ address }: { address: string }) {
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <RadarChart data={rows} outerRadius="80%">
-                <PolarGrid stroke="rgba(255,255,255,0.08)" />
+                <PolarGrid stroke="rgb(var(--fg-rgb) / 0.1)" />
                 <PolarAngleAxis
                   dataKey="axis"
-                  stroke="rgba(255,255,255,0.65)"
+                  stroke="rgb(var(--fg-rgb) / 0.65)"
                   tick={{ fontSize: 11 }}
                 />
                 <PolarRadiusAxis
                   domain={[0, 100]}
-                  stroke="rgba(255,255,255,0.15)"
-                  tick={{ fill: "rgba(255,255,255,0.25)", fontSize: 9 }}
+                  stroke="rgb(var(--fg-rgb) / 0.15)"
+                  tick={{ fill: "rgb(var(--fg-rgb) / 0.25)", fontSize: 9 }}
                   tickCount={5}
                   axisLine={false}
                 />
                 <Radar
                   name="score"
                   dataKey="value"
-                  stroke="#00ff88"
-                  fill="#00ff88"
+                  stroke={brand}
+                  fill={brand}
                   fillOpacity={0.3}
                   isAnimationActive
                   animationDuration={700}

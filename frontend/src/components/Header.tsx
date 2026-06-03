@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { SearchBar } from "./SearchBar";
+import { ThemeToggle } from "./ThemeToggle";
 
 // Single source of truth for nav links — used by both desktop bar and
 // mobile dropdown so nothing drifts out of sync.
@@ -70,6 +71,8 @@ export function Header() {
           <nav className="hidden items-center gap-5 lg:flex">
             {NAV.map((n) => <NavItem key={n.href} link={n} active={pathname === n.href} />)}
           </nav>
+
+          <ThemeToggle />
 
           {/* Mobile hamburger */}
           <button

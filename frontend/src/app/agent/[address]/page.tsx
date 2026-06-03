@@ -106,15 +106,13 @@ export default async function AgentPage({
                   <div className="min-w-0">
                     <div className="flex items-center gap-1 font-mono text-xs">
                       <span className="text-white/30">→</span>
-                      <a
-                        href={basescanAddress(tx.to_address)}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <Link
+                        href={`/seller/${tx.to_address}`}
                         className="truncate text-white/80 hover:text-brand"
-                        title={tx.to_address}
+                        title={`${tx.to_address} — seller profile`}
                       >
                         {shortAddress(tx.to_address)}
-                      </a>
+                      </Link>
                       <FacilitatorBadge name={tx.facilitator} />
                     </div>
                     <a

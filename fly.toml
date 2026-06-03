@@ -1,0 +1,47 @@
+# Single Fly app running BOTH the indexer and the FastAPI service in one
+# machine, sharing one persistent volume. This is the only architecture
+# that lets the API read what the indexer writes via SQLite.
+#
+#   indexer (background) ─┐
+#                         ├─→ /data/x402pulse.db ─→ API (foreground, port 8000)
+#                         │   (mounted volume)
+#   x402pulse_data ───────┘
+
+app = "x402pulse"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  DATABASE_URL = "/data/x402pulse.db"
+  POLL_INTERVAL_SECONDS = "12"
+  BACKFILL_HOURS = "720"
+  ALCHEMY_CHUNK_BLOCKS = "10"
+  RPC_PACING_SECONDS = "0.05"
+  MAP_MIN_TXNS = "3"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  # Health check on the API. If /health fails the machine restarts,
+  # which also restarts the indexer (single container).
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "60s"
+    method = "GET"
+    path = "/health"
+
+[[mounts]]
+  source = "x402pulse_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  cpus = 1
