@@ -1,6 +1,6 @@
 import { Header } from "@/components/Header";
 import { HealthScore } from "@/components/HealthScore";
-import { LiveActivityMap } from "@/components/LiveActivityMap";
+import { LivePulse } from "@/components/LivePulse";
 import { PaymentSizeDistribution } from "@/components/PaymentSizeDistribution";
 import { StatsBar } from "@/components/StatsBar";
 import { VolumeChart } from "@/components/VolumeChart";
@@ -25,7 +25,7 @@ export default function Page() {
         <StatsBar />
         <VolumeChart />
         <PaymentSizeDistribution />
-        <LiveActivityMap />
+        <LivePulse />
         <Leaderboards />
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <LiveFeed />
