@@ -75,7 +75,7 @@ function RateNotice() {
       </span>
       <p className="text-sm text-white/60">
         Rate limited to <span className="text-white">60 requests/minute per IP</span>.
-        Open source — see the GitHub link in the header.
+        No API key required.
       </p>
     </div>
   );

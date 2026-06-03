@@ -16,7 +16,6 @@ const NAV: NavLink[] = [
   { href: "/report",      label: "Report" },
   { href: "/watch",       label: "Watchlist" },
   { href: "/api-docs",    label: "API" },
-  { href: "https://github.com/saalick/x402pulse", label: "GitHub ↗", external: true },
 ];
 
 /**
