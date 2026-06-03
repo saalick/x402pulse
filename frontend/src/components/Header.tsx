@@ -54,13 +54,23 @@ export function Header() {
           aria-label="x402pulse home"
           className="group flex shrink-0 items-center"
         >
+          {/* Both logos ship; globals.css hides the wrong one based on
+              the html.light class so the swap is instant on toggle. */}
           <Image
             src="/logo.png"
             alt="x402Pulse"
             width={156}
             height={42}
             priority
-            className="h-8 w-auto sm:h-9 lg:h-10"
+            className="theme-dark-only h-8 w-auto sm:h-9 lg:h-10"
+          />
+          <Image
+            src="/logo-light.png"
+            alt="x402Pulse"
+            width={156}
+            height={42}
+            priority
+            className="theme-light-only h-8 w-auto sm:h-9 lg:h-10"
           />
         </Link>
 

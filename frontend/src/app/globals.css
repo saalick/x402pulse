@@ -107,6 +107,13 @@ body {
 
 .tabular { font-variant-numeric: tabular-nums; }
 
+/* Theme-scoped visibility — used for the header logo swap.
+   Both logos ship in the markup so the right one is visible
+   immediately based on the html.light class set by the inline
+   boot script, with no flash or JS race. */
+html.light .theme-dark-only { display: none !important; }
+html:not(.light) .theme-light-only { display: none !important; }
+
 .brand-gradient {
   background: linear-gradient(
     180deg,
