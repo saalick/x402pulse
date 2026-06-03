@@ -330,8 +330,8 @@ function EndpointCard({ endpoint }: { endpoint: Endpoint }) {
           <p className="text-[11px] font-medium uppercase tracking-wider text-white/40">
             Parameters
           </p>
-          <div className="mt-2 overflow-hidden rounded-lg border border-white/5">
-            <table className="w-full text-xs">
+          <div className="mt-2 overflow-x-auto rounded-lg border border-white/5">
+            <table className="w-full min-w-[480px] text-xs">
               <thead>
                 <tr className="bg-white/[0.02] text-left text-white/40">
                   <th className="px-3 py-2 font-medium">Name</th>

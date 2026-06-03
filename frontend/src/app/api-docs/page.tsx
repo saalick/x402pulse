@@ -16,7 +16,7 @@ export default function ApiDocsPage() {
   return (
     <>
       <Header />
-      <main className="mx-auto max-w-5xl space-y-8 px-6 py-8">
+      <main className="mx-auto max-w-5xl space-y-8 px-4 py-6 sm:px-6 sm:py-8">
         <DocsHero />
         <BaseUrls />
         <RateNotice />

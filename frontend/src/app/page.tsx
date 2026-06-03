@@ -16,7 +16,7 @@ export default function Page() {
   return (
     <>
       <Header />
-      <main className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+      <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 sm:py-8">
         <Hero />
         <AlertBanner />
         <HealthScore />

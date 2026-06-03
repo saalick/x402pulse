@@ -76,7 +76,7 @@ export default function ReportPage() {
   return (
     <>
       <Header />
-      <main className="mx-auto max-w-3xl space-y-6 px-6 py-8">
+      <main className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6 sm:py-8">
         <Hero />
 
         {error && (
@@ -165,7 +165,7 @@ const ReportCard = forwardRef<HTMLDivElement, { report: DailyReport | null }>(
           </p>
         </div>
 
-        <div className="mt-6 grid grid-cols-3 gap-3">
+        <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
           <Metric label="Transactions" value={report.total_transactions.toLocaleString()} />
           <Metric label="Agents"       value={report.unique_agents.toString()} />
           <Metric label="Sellers"      value={report.unique_sellers.toString()} />

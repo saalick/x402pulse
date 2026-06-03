@@ -115,8 +115,8 @@ function BoardCard({
           No data yet.
         </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-white/5">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto rounded-lg border border-white/5">
+          <table className="w-full min-w-[520px] text-sm">
             <thead>
               <tr className="bg-white/[0.02] text-left text-[11px] uppercase tracking-wider text-white/40">
                 <th className="px-3 py-2 font-medium">#</th>

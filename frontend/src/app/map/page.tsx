@@ -27,7 +27,7 @@ export default async function MapPage() {
   return (
     <>
       <Header />
-      <main className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+      <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 sm:py-8">
         <Hero />
         <section className="card p-5 shadow-card animate-fade-in-up">
           <EcosystemGraph initialData={initial} />

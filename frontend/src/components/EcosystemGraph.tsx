@@ -49,8 +49,10 @@ export function EcosystemGraph({ initialData }: { initialData: MapData | null })
     const g = d3.select(gRef.current);
     g.selectAll("*").remove();
 
+    // Read both dims live so the force layout centers on whatever the
+    // SVG actually rendered as — varies by viewport on mobile vs desktop.
     const width = svgRef.current.clientWidth || 800;
-    const height = 560;
+    const height = svgRef.current.clientHeight || 560;
 
     const nodes: SimNode[] = data.nodes.map((n) => ({ ...n }));
     const edges: SimEdge[] = data.edges.map((e) => ({ ...e }));
@@ -220,11 +222,11 @@ export function EcosystemGraph({ initialData }: { initialData: MapData | null })
       </div>
 
       <div className="relative overflow-hidden rounded-lg border border-white/5 bg-[#070707]">
+        {/* Mobile: shorter so it doesn't dominate the viewport. Desktop: 560. */}
         <svg
           ref={svgRef}
           width="100%"
-          height={560}
-          className="block cursor-grab active:cursor-grabbing"
+          className="block h-[380px] cursor-grab active:cursor-grabbing sm:h-[480px] lg:h-[560px]"
         >
           <g ref={gRef} />
         </svg>
