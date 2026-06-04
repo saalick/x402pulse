@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { CountUp } from "./CountUp";
 import { api, Stats } from "@/lib/api";
-import { shortDate } from "@/lib/format";
 
 const REFRESH_MS = 30_000;
 
@@ -32,13 +31,14 @@ export function StatsBar() {
     };
   }, []);
 
-  // "Total*" cards actually reflect the indexed data window, not all of
-  // x402 history. Sub-label shows the actual window so users aren't misled.
-  const since = stats?.data_window.since;
-  const days  = stats?.data_window.days ?? 0;
-  const totalSub = since
-    ? `since ${shortDate(since)} · ${days.toFixed(0)}d indexed`
-    : "indexing…";
+  // Indexer is configured for the last 30 days. If for whatever reason the
+  // DB ends up with a different range, fall through to a literal day count.
+  const days = stats?.data_window.days ?? 0;
+  const totalSub = !days
+    ? "indexing…"
+    : days <= 31
+      ? "last 30 days"
+      : `last ${days.toFixed(0)} days`;
 
   return (
     <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

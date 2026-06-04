@@ -24,8 +24,9 @@ import sqlite3
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, Literal
+from typing import Iterator, Literal, Optional
 
+import requests
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Path as PathParam, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -140,6 +141,81 @@ def _data_window(conn: sqlite3.Connection) -> dict:
 # be for us to flag it as "bounded by our coverage"? Use 1 hour to allow for
 # blocks indexed in the same chunk as the earliest tx.
 BOUNDED_TOLERANCE_SECONDS = 3_600
+
+
+# ------------------------------------------------------------------ on-chain first-seen
+
+# Looking up "actual first USDC transfer from this address on Base" requires
+# walking the whole chain — pointless to do in the indexer for every agent
+# when Alchemy can answer it in one call via alchemy_getAssetTransfers.
+# Cache in-process: each address is immutable, so we never need to re-look-up.
+ALCHEMY_BASE_URL = os.getenv("ALCHEMY_BASE_URL")
+USDC_BASE_MAINNET = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+_first_seen_cache: dict[str, Optional[int]] = {}
+
+
+@app.get("/agent/{address}/first-seen")
+def agent_first_seen(
+    address: str = PathParam(..., pattern=ADDRESS_RE.pattern),
+) -> dict:
+    """On-chain first USDC transfer FROM this address on Base mainnet.
+
+    Goes straight to Alchemy via alchemy_getAssetTransfers — independent of
+    how far back our index reaches. Used to show the true onboarding date
+    for an agent even when our backfill window is shorter.
+
+    Returns {"address": ..., "first_seen": unix_ts_or_null, "source": "alchemy"|"cache"|"none"}.
+    """
+    if not ALCHEMY_BASE_URL:
+        raise HTTPException(503, "on-chain lookup unavailable: ALCHEMY_BASE_URL not configured")
+
+    addr = address.lower()
+    if addr in _first_seen_cache:
+        return {"address": addr, "first_seen": _first_seen_cache[addr], "source": "cache"}
+
+    # Step 1: ask Alchemy for the earliest ERC-20 USDC transfer from this address.
+    transfer_payload = {
+        "jsonrpc": "2.0", "id": 1,
+        "method": "alchemy_getAssetTransfers",
+        "params": [{
+            "fromAddress": address,
+            "contractAddresses": [USDC_BASE_MAINNET],
+            "category": ["erc20"],
+            "order": "asc",
+            "maxCount": "0x1",
+        }],
+    }
+    try:
+        r = requests.post(ALCHEMY_BASE_URL, json=transfer_payload, timeout=10)
+        r.raise_for_status()
+        transfers = r.json().get("result", {}).get("transfers", [])
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(503, f"alchemy lookup failed: {exc}") from exc
+
+    if not transfers:
+        _first_seen_cache[addr] = None
+        return {"address": addr, "first_seen": None, "source": "none"}
+
+    # Step 2: turn that block number into a timestamp.
+    block_hex = transfers[0]["blockNum"]
+    block_payload = {
+        "jsonrpc": "2.0", "id": 2,
+        "method": "eth_getBlockByNumber",
+        "params": [block_hex, False],
+    }
+    try:
+        r2 = requests.post(ALCHEMY_BASE_URL, json=block_payload, timeout=10)
+        r2.raise_for_status()
+        block = r2.json().get("result")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(503, f"alchemy block lookup failed: {exc}") from exc
+
+    if not block or "timestamp" not in block:
+        return {"address": addr, "first_seen": None, "source": "none"}
+
+    ts = int(block["timestamp"], 16)
+    _first_seen_cache[addr] = ts
+    return {"address": addr, "first_seen": ts, "source": "alchemy"}
 
 
 # ------------------------------------------------------------------ /stats

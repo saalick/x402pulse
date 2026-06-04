@@ -5,6 +5,7 @@ import { AgentHourlyChart } from "@/components/AgentHourlyChart";
 import { AgentFingerprint } from "@/components/AgentFingerprint";
 import { CopyAddressButton } from "@/components/CopyAddressButton";
 import { FacilitatorBadge } from "@/components/Leaderboards";
+import { OnChainFirstSeen } from "@/components/OnChainFirstSeen";
 import { ScoreBadge } from "@/components/ScoreBadge";
 import { API_BASE, type AgentProfile } from "@/lib/api";
 import {
@@ -13,7 +14,6 @@ import {
   formatUsdc,
   shortAddress,
   timeAgo,
-  timeAgoBounded,
 } from "@/lib/format";
 
 // Always fetch fresh — agent stats change as the indexer ingests new blocks.
@@ -228,21 +228,17 @@ function StatGrid({ profile }: { profile: AgentProfile }) {
       <Stat
         label="Total Spent"
         value={`$${formatUsdc(profile.total_spent_usdc)}`}
-        sub="USDC, all time"
+        sub="USDC, last 30 days"
       />
       <Stat
         label="Transactions"
         value={profile.total_transactions.toLocaleString()}
-        sub="all time"
+        sub="last 30 days"
       />
-      <Stat
-        label="First Seen"
-        value={timeAgoBounded(profile.first_seen, profile.first_seen_bounded)}
-        sub={
-          profile.first_seen_bounded
-            ? `pinned to indexed window · ${absoluteDate(profile.first_seen)}`
-            : absoluteDate(profile.first_seen)
-        }
+      <OnChainFirstSeen
+        address={profile.address}
+        indexedFirstSeen={profile.first_seen}
+        bounded={profile.first_seen_bounded}
       />
       <Stat
         label="Avg Payment"
@@ -278,11 +274,3 @@ function SectionHead({ title, sub }: { title: string; sub: string }) {
   );
 }
 
-function absoluteDate(ts: number) {
-  return new Date(ts * 1000).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
