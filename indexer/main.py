@@ -123,6 +123,13 @@ EXTEND_BACKWARD = os.getenv("EXTEND_BACKWARD", "false").lower() == "true"
 EXTEND_BACKWARD_HOURS = float(os.getenv("EXTEND_BACKWARD_HOURS", str(BACKFILL_HOURS)))
 EXTEND_BACKWARD_BLOCKS = int(EXTEND_BACKWARD_HOURS * BLOCKS_PER_HOUR)
 
+# Toggle the EIP-3009 pass-through (AuthUsed) path. Set false to skip it
+# entirely — custodial Transfer-to-facilitator becomes the only path, which
+# is ~10× faster per chunk and uses zero Alchemy CU. Use this when you want
+# to race through a backfill, then flip back to true so the real-time tail
+# catches Coinbase/FluxA/PayAI pass-through txns.
+INDEX_AUTHUSED = os.getenv("INDEX_AUTHUSED", "true").lower() == "true"
+
 CHAIN_NAME = "base"
 CHAIN_ID = 8453
 
@@ -912,14 +919,15 @@ def process_chunk(
     n_t = decode_and_insert_transfers(conn, pool, transfer_logs)
 
     n_a = 0
-    try:
-        auth_logs = fetch_authused_logs(pool, from_block, to_block)
-        n_a = decode_and_insert_authused(conn, pool, auth_logs)
-    except Exception as exc:  # noqa: BLE001
-        log.warning(
-            "[pass-through] chunk %s-%s skipped (%s): %s",
-            from_block, to_block, exc.__class__.__name__, str(exc)[:120],
-        )
+    if INDEX_AUTHUSED:
+        try:
+            auth_logs = fetch_authused_logs(pool, from_block, to_block)
+            n_a = decode_and_insert_authused(conn, pool, auth_logs)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "[pass-through] chunk %s-%s skipped (%s): %s",
+                from_block, to_block, exc.__class__.__name__, str(exc)[:120],
+            )
 
     return n_t, n_a
 
