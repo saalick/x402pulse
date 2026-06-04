@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { MaintenanceBanner } from "./MaintenanceBanner";
 import { SearchBar } from "./SearchBar";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -46,6 +47,7 @@ export function Header() {
 
   return (
     <div className="sticky top-0 z-40">
+    <MaintenanceBanner />
     <header className="border-b border-white/5 bg-bg/80 backdrop-blur-md">
       <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:gap-5 sm:px-6 lg:h-16">
         <Link
