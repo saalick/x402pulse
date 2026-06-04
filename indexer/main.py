@@ -71,6 +71,22 @@ TRANSFER_EVENT_ABI = {
 }
 TRANSFER_TOPIC = Web3.keccak(text="Transfer(address,address,uint256)").to_0x_hex()
 
+# USDC EIP-3009 AuthorizationUsed(authorizer, nonce). Emitted by
+# transferWithAuthorization / receiveWithAuthorization — the pass-through
+# pattern used by Coinbase's CDP x402 facilitator. The relayer (facilitator)
+# is the tx.from of the outer transaction, NOT a participant in the Transfer
+# event, so we have to fetch tx.from per-tx to attribute the payment.
+AUTH_USED_EVENT_ABI = {
+    "anonymous": False,
+    "inputs": [
+        {"indexed": True, "name": "authorizer", "type": "address"},
+        {"indexed": True, "name": "nonce", "type": "bytes32"},
+    ],
+    "name": "AuthorizationUsed",
+    "type": "event",
+}
+AUTH_USED_TOPIC = Web3.keccak(text="AuthorizationUsed(address,bytes32)").to_0x_hex()
+
 # Base mainnet produces a block roughly every 2 seconds.
 BLOCKS_PER_HOUR = 1_800
 BLOCKS_PER_DAY = 43_200
@@ -91,6 +107,14 @@ MAX_TOPICS_PER_FILTER = 40
 RPC_PACING_SECONDS = float(os.getenv("RPC_PACING_SECONDS", "0.05"))
 
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL_SECONDS", "12"))
+
+# When the AuthorizationUsed (EIP-3009 pass-through) path is enabled, the
+# backward-extension pass becomes ~50× slower per chunk because every
+# AuthorizationUsed event needs a tx.from lookup. To keep the real-time
+# tail from being blocked behind a multi-day backward replay, the backward
+# pass is opt-in. Set EXTEND_BACKWARD=true to run it. Existing historical
+# rows are preserved either way.
+EXTEND_BACKWARD = os.getenv("EXTEND_BACKWARD", "false").lower() == "true"
 
 CHAIN_NAME = "base"
 CHAIN_ID = 8453
@@ -226,6 +250,38 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
 
 
+SCHEMA_VERSION = "2"  # bump → run migrate()
+
+
+def migrate(conn: sqlite3.Connection) -> None:
+    """One-time upgrades that need to run before the indexer starts.
+
+    v1 → v2: AuthorizationUsed (EIP-3009 pass-through) path is now active.
+      - Deletes existing self-transfer rows (Polymer-style $0.10 noise where
+        from == to) — the new insert path filters these out at write time,
+        this cleans what already landed.
+
+      State checkpoints are intentionally NOT reset:
+        * Forward catchup continues from current last_indexed_block with the
+          combined process_chunk, so new pass-through txns flow immediately.
+        * Backward extension is opt-in via EXTEND_BACKWARD — historical
+          pass-through fills lazily, behind the real-time tail.
+    """
+    current = get_state(conn, "schema_version") or "1"
+    if current == SCHEMA_VERSION:
+        return
+
+    log.info("Migrating indexer state %s → %s …", current, SCHEMA_VERSION)
+    if current == "1":
+        deleted = conn.execute(
+            "DELETE FROM transfers WHERE from_address = to_address"
+        ).rowcount
+        log.info("  cleaned %s self-transfer rows", deleted)
+
+    set_state(conn, "schema_version", SCHEMA_VERSION)
+    log.info("Migration to v%s complete.", SCHEMA_VERSION)
+
+
 def get_state(conn: sqlite3.Connection, key: str) -> Optional[str]:
     row = conn.execute("SELECT value FROM indexer_state WHERE key = ?", (key,)).fetchone()
     return row[0] if row else None
@@ -312,70 +368,43 @@ def get_block_timestamps_batch(
 
 
 def _batch_block_ts_one(pool: W3Pool, blocks: list[int]) -> dict[int, int]:
-    payload = [
-        {
-            "jsonrpc": "2.0",
-            "id": idx,
-            "method": "eth_getBlockByNumber",
-            "params": [hex(b), False],
-        }
-        for idx, b in enumerate(blocks)
-    ]
-    last_exc: Optional[Exception] = None
-    for ep, _ in pool:
-        try:
-            r = _requests.post(ep.url, json=payload, timeout=30)
-            r.raise_for_status()
-            arr = r.json()
-            if not isinstance(arr, list) or len(arr) != len(blocks):
-                raise RuntimeError(f"unexpected batch response shape from {ep.name}")
-            result: dict[int, int] = {}
-            for resp in arr:
-                idx = resp.get("id")
-                if "result" not in resp or resp["result"] is None:
-                    raise RuntimeError(
-                        f"missing result in {ep.name} response: {resp.get('error')}"
-                    )
-                ts_hex = resp["result"]["timestamp"]
-                result[blocks[idx]] = int(ts_hex, 16)
-            return result
-        except Exception as exc:  # noqa: BLE001
-            last_exc = exc
-            log.warning(
-                "Batch block lookup via %s failed (%d blocks): %s",
-                ep.name, len(blocks), exc,
-            )
-            continue
+    """Batch eth_getBlockByNumber via the shared _batched_jsonrpc path."""
+    params_list = [[hex(b), False] for b in blocks]
+    try:
+        results = _batched_jsonrpc(pool, "eth_getBlockByNumber", params_list,
+                                   batch_size=len(blocks) + 1)  # one batch
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Batch block lookup failed (%d blocks): %s — falling back to per-block",
+                    len(blocks), exc)
+        return {b: get_block_timestamp(pool, b) for b in blocks}
 
-    # If every RPC failed the batched path, fall back to one-block-at-a-time.
-    log.warning("Falling back to per-block lookups for %d blocks", len(blocks))
-    result = {}
-    for b in blocks:
-        result[b] = get_block_timestamp(pool, b)
-    return result
+    out: dict[int, int] = {}
+    for b, r in zip(blocks, results):
+        if not r or "timestamp" not in r:
+            out[b] = get_block_timestamp(pool, b)  # defensive fallback
+        else:
+            out[b] = int(r["timestamp"], 16)
+    return out
 
 # ------------------------------------------------------------------ getLogs
 
 def _do_get_logs(
-    w3: Web3, from_block: int, to_block: int, topic_batch: list[str],
+    w3: Web3, from_block: int, to_block: int, topics: list,
 ) -> list[LogReceipt]:
+    """Raw eth_getLogs against the USDC contract with caller-supplied topics."""
     params = {
         "fromBlock": from_block,
         "toBlock":   to_block,
         "address":   USDC_ADDRESS,
-        "topics":    [TRANSFER_TOPIC, None, topic_batch],
+        "topics":    topics,
     }
     return w3.eth.get_logs(params)
 
 
-def _fetch_batch_with_fallback(
-    pool: W3Pool, from_block: int, to_block: int, topic_batch: list[str],
+def _fetch_logs_with_fallback(
+    pool: W3Pool, from_block: int, to_block: int, topics: list,
 ) -> list[LogReceipt]:
-    """One eth_getLogs request for one topic batch, with multi-RPC fallback.
-
-    If the requested range exceeds an endpoint's chunk cap, we transparently
-    sub-chunk for that endpoint before declaring it failed.
-    """
+    """eth_getLogs across the pool with per-endpoint sub-chunking on range overflow."""
     last_exc: Optional[Exception] = None
     range_size = to_block - from_block + 1
 
@@ -386,12 +415,12 @@ def _fetch_batch_with_fallback(
                 cur = from_block
                 while cur <= to_block:
                     end = min(cur + ep.chunk_blocks - 1, to_block)
-                    results.extend(_do_get_logs(w3, cur, end, topic_batch))
+                    results.extend(_do_get_logs(w3, cur, end, topics))
                     cur = end + 1
                     if RPC_PACING_SECONDS:
                         time.sleep(RPC_PACING_SECONDS)
                 return results
-            return _do_get_logs(w3, from_block, to_block, topic_batch)
+            return _do_get_logs(w3, from_block, to_block, topics)
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
             body = _extract_http_body(exc)
@@ -407,80 +436,323 @@ def _fetch_batch_with_fallback(
     )
 
 
-def fetch_logs(pool: W3Pool, from_block: int, to_block: int) -> list[LogReceipt]:
-    """All facilitator-targeted USDC Transfer logs in [from_block, to_block]."""
+def fetch_transfer_logs(pool: W3Pool, from_block: int, to_block: int) -> list[LogReceipt]:
+    """USDC Transfer logs whose `to` is a tracked facilitator (custodial pattern)."""
     to_topics = [address_to_topic(a) for a in sorted(FACILITATOR_ADDRESSES)]
     results: list[LogReceipt] = []
     for topic_batch in chunked(to_topics, MAX_TOPICS_PER_FILTER):
-        results.extend(_fetch_batch_with_fallback(pool, from_block, to_block, topic_batch))
+        results.extend(_fetch_logs_with_fallback(
+            pool, from_block, to_block,
+            topics=[TRANSFER_TOPIC, None, topic_batch],
+        ))
     return results
+
+
+def fetch_authused_logs(pool: W3Pool, from_block: int, to_block: int) -> list[LogReceipt]:
+    """All USDC AuthorizationUsed events in [from_block, to_block].
+
+    These fire on every transferWithAuthorization / receiveWithAuthorization
+    call (EIP-3009). We can't pre-filter to facilitators because the
+    relayer/facilitator isn't a participant in the event — they're tx.from
+    of the outer transaction. The post-filter happens via a follow-up
+    eth_getTransactionByHash batch.
+    """
+    return _fetch_logs_with_fallback(
+        pool, from_block, to_block,
+        topics=[AUTH_USED_TOPIC],
+    )
+
+
+# ------------------------------------------------------------------ batched JSON-RPC
+
+def _batched_jsonrpc(
+    pool: W3Pool, method: str, params_list: list[list], batch_size: int = BATCH_BLOCKS_LIMIT,
+) -> list:
+    """Send a list of single-method JSON-RPC calls as one batched HTTP request.
+
+    Returns results in the same order as `params_list`. Sub-chunks at
+    `batch_size` to stay below per-provider batch caps (~100 is universally
+    safe). Falls back across pool members on transport errors.
+    """
+    if not params_list:
+        return []
+    out: list = []
+    for i in range(0, len(params_list), batch_size):
+        out.extend(_batched_jsonrpc_one(pool, method, params_list[i : i + batch_size]))
+    return out
+
+
+# Cache of (endpoint_name, method) pairs that have responded with an
+# unsupported-batch shape. mainnet.base.org, for instance, doesn't honour
+# batched eth_getTransactionByHash / eth_getTransactionReceipt — we discover
+# this once per session, then skip those endpoints for those methods so we
+# don't spam the logs every chunk.
+_BAD_BATCH_PAIRS: set[tuple[str, str]] = set()
+
+
+def _batched_jsonrpc_one(pool: W3Pool, method: str, params_list: list[list]) -> list:
+    payload = [
+        {"jsonrpc": "2.0", "id": idx, "method": method, "params": params}
+        for idx, params in enumerate(params_list)
+    ]
+    last_exc: Optional[Exception] = None
+    for ep, _ in pool:
+        if (ep.name, method) in _BAD_BATCH_PAIRS:
+            continue
+        try:
+            r = _requests.post(ep.url, json=payload, timeout=60)
+            r.raise_for_status()
+            arr = r.json()
+            if not isinstance(arr, list) or len(arr) != len(params_list):
+                # Remember this combo so the next chunk skips it silently.
+                _BAD_BATCH_PAIRS.add((ep.name, method))
+                log.info(
+                    "RPC %s doesn't honour batched %s — skipping for the rest of session",
+                    ep.name, method,
+                )
+                continue
+            # Responses can arrive out of order — sort by `id` to align with input.
+            arr.sort(key=lambda x: x.get("id", 0))
+            return [resp.get("result") for resp in arr]
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            log.warning(
+                "JSON-RPC batch %s via %s failed (%d items): %s",
+                method, ep.name, len(params_list), exc,
+            )
+            continue
+    raise last_exc or RuntimeError(
+        f"all RPC endpoints failed for {method} batch of {len(params_list)}"
+    )
+
+
+def get_tx_senders_batch(pool: W3Pool, tx_hashes: list[str]) -> dict[str, Optional[str]]:
+    """tx_hash → lowercase tx.from. Missing entries indicate the lookup failed."""
+    if not tx_hashes:
+        return {}
+    uniq = list({h for h in tx_hashes})
+    params_list = [[h] for h in uniq]
+    results = _batched_jsonrpc(pool, "eth_getTransactionByHash", params_list)
+    out: dict[str, Optional[str]] = {}
+    for h, r in zip(uniq, results):
+        if r and isinstance(r, dict) and r.get("from"):
+            out[h] = r["from"].lower()
+        else:
+            out[h] = None
+    return out
+
+
+def get_tx_receipts_batch(pool: W3Pool, tx_hashes: list[str]) -> dict[str, Optional[dict]]:
+    """tx_hash → receipt dict (with .logs)."""
+    if not tx_hashes:
+        return {}
+    uniq = list({h for h in tx_hashes})
+    params_list = [[h] for h in uniq]
+    results = _batched_jsonrpc(pool, "eth_getTransactionReceipt", params_list)
+    return {h: (r if isinstance(r, dict) else None) for h, r in zip(uniq, results)}
 
 # ------------------------------------------------------------------ decode + insert
 
-def decode_and_insert(
+def _insert_row(
+    conn: sqlite3.Connection,
+    *,
+    tx_hash: str, log_index: int, block: int, ts: int,
+    from_addr: str, to_addr: str, amount: float, facilitator: str,
+) -> int:
+    """Insert one transfer row, returning 1 if it was new, 0 if a duplicate."""
+    cur = conn.execute(
+        "INSERT OR IGNORE INTO transfers "
+        "(tx_hash, log_index, block_number, timestamp, from_address, "
+        " to_address, amount_usdc, chain, facilitator) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (tx_hash, log_index, block, ts, from_addr, to_addr, amount,
+         CHAIN_NAME, facilitator),
+    )
+    return cur.rowcount or 0
+
+
+def decode_and_insert_transfers(
     conn: sqlite3.Connection,
     pool: W3Pool,
     logs: list[LogReceipt],
 ) -> int:
-    """Decode Transfer logs and insert any new rows. Returns inserted count.
+    """Custodial-facilitator path: Transfer(buyer → facilitator).
 
-    Two passes: (1) decode all logs and collect unique block numbers, then
-    (2) fetch every block timestamp in a SINGLE batched JSON-RPC call. This
-    is the critical perf path during backfill — chunks rich in logs used to
-    bottleneck on N per-block HTTP round-trips.
+    Skips self-transfers (from == to) — facilitators paying themselves are
+    bookkeeping noise (e.g. Polymer's $0.10 heartbeat) and not real x402
+    payments.
     """
     if not logs:
         return 0
 
-    # The codec is identical across RPCs — any pool member works for decoding.
     codec = pool[0][1].codec
-
-    # Pass 1: decode logs, dedupe block numbers.
     decoded_rows: list[dict] = []
     needed_blocks: set[int] = set()
+    skipped_self = 0
+
     for raw in logs:
         decoded = get_event_data(codec, TRANSFER_EVENT_ABI, raw)
         to_addr = decoded["args"]["to"].lower()
         if to_addr not in FACILITATOR_ADDRESSES:
-            # Defensive: topic batching should already guarantee this.
+            continue  # Defensive: topic batching should already filter.
+        from_addr = decoded["args"]["from"].lower()
+        if from_addr == to_addr:
+            skipped_self += 1
             continue
         decoded_rows.append({
-            "tx_hash":     decoded["transactionHash"].to_0x_hex(),
-            "log_index":   decoded["logIndex"],
-            "block":       decoded["blockNumber"],
-            "from_addr":   decoded["args"]["from"].lower(),
-            "to_addr":     to_addr,
-            "amount":      decoded["args"]["value"] / (10**USDC_DECIMALS),
+            "tx_hash":   decoded["transactionHash"].to_0x_hex(),
+            "log_index": decoded["logIndex"],
+            "block":     decoded["blockNumber"],
+            "from_addr": from_addr,
+            "to_addr":   to_addr,
+            "amount":    decoded["args"]["value"] / (10**USDC_DECIMALS),
         })
         needed_blocks.add(decoded["blockNumber"])
 
     if not decoded_rows:
         return 0
 
-    # Pass 2: one batched RPC for every unique block in this chunk.
     block_ts = get_block_timestamps_batch(pool, list(needed_blocks))
-
     inserted = 0
     for r in decoded_rows:
-        ts = block_ts.get(r["block"])
-        if ts is None:
-            # Should not happen — defensive fallback.
-            ts = get_block_timestamp(pool, r["block"])
+        ts = block_ts.get(r["block"]) or get_block_timestamp(pool, r["block"])
         facilitator = ADDRESS_TO_FACILITATOR.get(r["to_addr"], "unknown")
-        cur = conn.execute(
-            "INSERT OR IGNORE INTO transfers "
-            "(tx_hash, log_index, block_number, timestamp, from_address, "
-            " to_address, amount_usdc, chain, facilitator) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
-            (
-                r["tx_hash"], r["log_index"], r["block"], ts,
-                r["from_addr"], r["to_addr"], r["amount"],
-                CHAIN_NAME, facilitator,
-            ),
+        inserted += _insert_row(
+            conn, tx_hash=r["tx_hash"], log_index=r["log_index"], block=r["block"],
+            ts=ts, from_addr=r["from_addr"], to_addr=r["to_addr"],
+            amount=r["amount"], facilitator=facilitator,
         )
-        if cur.rowcount:
-            inserted += 1
     return inserted
+
+
+def _hex_to_int(v) -> int:
+    """Coerce a JSON-RPC numeric field (may be hex string or int) to int."""
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str):
+        return int(v, 16)
+    raise TypeError(f"can't coerce {type(v).__name__} to int")
+
+
+def _topic_to_address(topic: str) -> str:
+    """Decode a 32-byte indexed-address topic to a 0x… lowercase address."""
+    return "0x" + topic.lower().lstrip("0x").rjust(64, "0")[-40:]
+
+
+def decode_and_insert_authused(
+    conn: sqlite3.Connection,
+    pool: W3Pool,
+    auth_logs: list[LogReceipt],
+) -> int:
+    """EIP-3009 pass-through path.
+
+    For each AuthorizationUsed event:
+      1. Look up tx.from (the relayer/facilitator) via batched
+         eth_getTransactionByHash.
+      2. Keep only txs whose sender is in our facilitator set.
+      3. Fetch each such tx's receipt to find the paired Transfer log
+         (transferWithAuthorization always emits exactly one).
+      4. Insert the Transfer with facilitator = ADDRESS_TO_FACILITATOR[tx.from].
+
+    Skips self-transfers as in the custodial path.
+    """
+    if not auth_logs:
+        return 0
+
+    # Step 1: unique tx_hashes that had an AuthorizationUsed event.
+    tx_hashes: set[str] = set()
+    for raw in auth_logs:
+        h = raw["transactionHash"]
+        if hasattr(h, "to_0x_hex"):
+            h = h.to_0x_hex()
+        elif isinstance(h, (bytes, bytearray)):
+            h = "0x" + h.hex()
+        tx_hashes.add(h)
+
+    if not tx_hashes:
+        return 0
+
+    # Step 2: batched tx.from lookups.
+    senders = get_tx_senders_batch(pool, list(tx_hashes))
+    facilitator_tx_hashes = [
+        h for h, sender in senders.items()
+        if sender and sender in FACILITATOR_ADDRESSES
+    ]
+    if not facilitator_tx_hashes:
+        return 0
+
+    # Step 3: batched receipt lookups for those facilitator-originated txs.
+    receipts = get_tx_receipts_batch(pool, facilitator_tx_hashes)
+
+    # Step 4: extract Transfer logs from each receipt and queue rows.
+    decoded_rows: list[dict] = []
+    needed_blocks: set[int] = set()
+    transfer_topic_lower = TRANSFER_TOPIC.lower()
+    usdc_addr_lower = USDC_ADDRESS.lower()
+
+    for tx_hash in facilitator_tx_hashes:
+        receipt = receipts.get(tx_hash)
+        if not receipt:
+            continue
+        facilitator = ADDRESS_TO_FACILITATOR.get(senders[tx_hash], "unknown")
+        for entry in receipt.get("logs", []):
+            try:
+                if entry["address"].lower() != usdc_addr_lower:
+                    continue
+                topics = entry.get("topics") or []
+                if len(topics) < 3 or topics[0].lower() != transfer_topic_lower:
+                    continue
+                from_addr = _topic_to_address(topics[1])
+                to_addr   = _topic_to_address(topics[2])
+                if from_addr == to_addr:
+                    continue
+                value = int(entry["data"], 16) / (10**USDC_DECIMALS)
+                log_index = _hex_to_int(entry["logIndex"])
+                block_num = _hex_to_int(entry["blockNumber"])
+            except Exception as exc:  # noqa: BLE001
+                log.warning("AuthUsed: failed to decode log in %s: %s", tx_hash, exc)
+                continue
+
+            decoded_rows.append({
+                "tx_hash":     tx_hash,
+                "log_index":   log_index,
+                "block":       block_num,
+                "from_addr":   from_addr,
+                "to_addr":     to_addr,
+                "amount":      value,
+                "facilitator": facilitator,
+            })
+            needed_blocks.add(block_num)
+
+    if not decoded_rows:
+        return 0
+
+    block_ts = get_block_timestamps_batch(pool, list(needed_blocks))
+    inserted = 0
+    for r in decoded_rows:
+        ts = block_ts.get(r["block"]) or get_block_timestamp(pool, r["block"])
+        inserted += _insert_row(
+            conn, tx_hash=r["tx_hash"], log_index=r["log_index"], block=r["block"],
+            ts=ts, from_addr=r["from_addr"], to_addr=r["to_addr"],
+            amount=r["amount"], facilitator=r["facilitator"],
+        )
+    return inserted
+
+
+def process_chunk(
+    conn: sqlite3.Connection, pool: W3Pool, from_block: int, to_block: int,
+) -> tuple[int, int]:
+    """Run both indexing paths over one [from_block, to_block] chunk.
+
+    Returns (transfers_inserted, authused_inserted).
+    """
+    transfer_logs = fetch_transfer_logs(pool, from_block, to_block)
+    n_t = decode_and_insert_transfers(conn, pool, transfer_logs)
+
+    auth_logs = fetch_authused_logs(pool, from_block, to_block)
+    n_a = decode_and_insert_authused(conn, pool, auth_logs)
+
+    return n_t, n_a
 
 # ------------------------------------------------------------------ runtime
 
@@ -500,18 +772,19 @@ def backfill(pool: W3Pool, conn: sqlite3.Connection, start_block: int, head: int
         start_block, head, head - start_block, chunk, pool[0][0].name,
     )
     cursor = start_block
-    total = 0
+    total_t = 0
+    total_a = 0
     last_progress_log = time.time()
 
     while cursor <= head and not _stop:
         chunk_end = min(cursor + chunk - 1, head)
-        logs = fetch_logs(pool, cursor, chunk_end)
-        added = decode_and_insert(conn, pool, logs)
-        total += added
-        if added:
+        n_t, n_a = process_chunk(conn, pool, cursor, chunk_end)
+        total_t += n_t
+        total_a += n_a
+        if n_t or n_a:
             log.info(
-                "  blocks %s-%s: +%s rows (running total %s)",
-                cursor, chunk_end, added, total,
+                "  blocks %s-%s: +%s custodial, +%s pass-through (total: %s+%s)",
+                cursor, chunk_end, n_t, n_a, total_t, total_a,
             )
         set_state(conn, "last_indexed_block", str(chunk_end))
         cursor = chunk_end + 1
@@ -521,10 +794,13 @@ def backfill(pool: W3Pool, conn: sqlite3.Connection, start_block: int, head: int
             done = cursor - start_block
             need = head - start_block
             pct = done * 100 / max(need, 1)
-            log.info("  ... progress %s/%s (%.1f%%), inserted %s", done, need, pct, total)
+            log.info(
+                "  ... progress %s/%s (%.1f%%), inserted %s custodial + %s pass-through",
+                done, need, pct, total_t, total_a,
+            )
             last_progress_log = now
 
-    log.info("Backfill complete. Inserted %s transfers.", total)
+    log.info("Backfill complete. %s custodial + %s pass-through transfers.", total_t, total_a)
 
 
 def backfill_extend_backward(
@@ -562,19 +838,20 @@ def backfill_extend_backward(
     # Iterate OLDEST → newest in chunk-sized steps. After each chunk, update
     # state so a kill mid-extension resumes correctly.
     cursor = desired_low
-    total = 0
+    total_t = 0
+    total_a = 0
     last_progress_log = time.time()
     upper = current_low - 1   # inclusive
 
     while cursor <= upper and not _stop:
         chunk_end = min(cursor + chunk - 1, upper)
-        logs = fetch_logs(pool, cursor, chunk_end)
-        added = decode_and_insert(conn, pool, logs)
-        total += added
-        if added:
+        n_t, n_a = process_chunk(conn, pool, cursor, chunk_end)
+        total_t += n_t
+        total_a += n_a
+        if n_t or n_a:
             log.info(
-                "  ← blocks %s-%s: +%s rows (backward total %s)",
-                cursor, chunk_end, added, total,
+                "  ← blocks %s-%s: +%s custodial, +%s pass-through (total: %s+%s)",
+                cursor, chunk_end, n_t, n_a, total_t, total_a,
             )
         # Track the LOWEST block we've covered so far.
         set_state(conn, "backward_extended_to_block", str(cursor))
@@ -585,12 +862,12 @@ def backfill_extend_backward(
             done = cursor - desired_low
             pct = done * 100 / max(span, 1)
             log.info(
-                "  ← progress %s/%s (%.1f%%), inserted %s",
-                done, span, pct, total,
+                "  ← progress %s/%s (%.1f%%), inserted %s custodial + %s pass-through",
+                done, span, pct, total_t, total_a,
             )
             last_progress_log = now
 
-    log.info("Backward extension complete. Inserted %s transfers.", total)
+    log.info("Backward extension complete. %s custodial + %s pass-through transfers.", total_t, total_a)
 
 
 def follow(pool: W3Pool, conn: sqlite3.Connection) -> None:
@@ -605,11 +882,13 @@ def follow(pool: W3Pool, conn: sqlite3.Connection) -> None:
                 cursor = last_indexed + 1
                 while cursor <= head and not _stop:
                     chunk_end = min(cursor + chunk - 1, head)
-                    logs = fetch_logs(pool, cursor, chunk_end)
-                    added = decode_and_insert(conn, pool, logs)
+                    n_t, n_a = process_chunk(conn, pool, cursor, chunk_end)
                     set_state(conn, "last_indexed_block", str(chunk_end))
-                    if added:
-                        log.info("blocks %s-%s: +%s transfers", cursor, chunk_end, added)
+                    if n_t or n_a:
+                        log.info(
+                            "blocks %s-%s: +%s custodial, +%s pass-through",
+                            cursor, chunk_end, n_t, n_a,
+                        )
                     cursor = chunk_end + 1
         except Exception as exc:  # noqa: BLE001
             log.exception("Polling cycle failed: %s", exc)
@@ -636,23 +915,31 @@ def main() -> None:
 
     with closing(db_connect()) as conn:
         init_db(conn)
+        migrate(conn)
         last_indexed = int(get_state(conn, "last_indexed_block") or 0)
 
         # FORWARD pass — index from where we left off up to current head.
-        # For a fresh DB this also kicks off the initial backfill window.
+        # For a fresh DB (or post-migration reset) this also kicks off the
+        # initial backfill window starting at head - BACKFILL_BLOCKS.
         forward_start = (last_indexed + 1) if last_indexed else max(head - BACKFILL_BLOCKS, 1)
         if forward_start <= head:
             backfill(bf_pool, conn, forward_start, head)
         else:
             log.info("Already caught up to head — skipping forward backfill.")
 
-        # BACKWARD pass — if the configured BACKFILL_HOURS is larger than
-        # what we currently have indexed, extend the window backwards.
+        # BACKWARD pass — opt-in (EXTEND_BACKWARD=true). The AuthorizationUsed
+        # path makes backward extension slow; defaulting it off lets the tail
+        # follow start immediately so new pass-through txns flow in real time.
         desired_low = max(1, head - BACKFILL_BLOCKS)
         db_min = conn.execute(
             "SELECT MIN(block_number) FROM transfers"
         ).fetchone()[0]
-        if db_min and db_min > desired_low and not _stop:
+        if not EXTEND_BACKWARD:
+            log.info(
+                "Backward extension disabled (EXTEND_BACKWARD=false). "
+                "Set EXTEND_BACKWARD=true to fill historical pass-through.",
+            )
+        elif db_min and db_min > desired_low and not _stop:
             log.info(
                 "Indexed window currently starts at block %s; BACKFILL_BLOCKS "
                 "wants %s. Extending backwards…",
