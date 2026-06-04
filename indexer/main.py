@@ -531,18 +531,21 @@ def fetch_authused_logs(pool: W3Pool, from_block: int, to_block: int) -> list[Lo
 # RPC_BATCH_CONCURRENCY=4 for ~5-10× more throughput.
 RPC_CONCURRENCY = int(os.getenv("RPC_BATCH_CONCURRENCY", "1"))
 
-# For getTx / getReceipt we prefer publicnode (verified 200/batch, free,
-# no CU) ahead of Ankr / dRPC / Alchemy. _batched_jsonrpc_one walks this
-# list in order — Alchemy only sees the traffic when everything free
-# above it has 429'd or failed.
+# Empirical findings on free-tier providers for batched getTx/getReceipt:
+#   publicnode  → 429s on batches of 100 under sustained load
+#   drpc free   → hard 500 with "Batch of more than 3 requests" — useless at 100
+#   ankr public → requires auth now (returns 401)
+# So we route those two methods to Alchemy directly. publicnode/drpc still
+# carry their share of getLogs and getBlockByNumber where they handle big
+# batches just fine.
 METHOD_HINTS: dict[str, dict] = {
     "eth_getTransactionByHash": {
         "batch_size": int(os.getenv("ALCHEMY_BATCH_SIZE", "100")),
-        "preferred_endpoints": ("publicnode", "ankr", "drpc", "alchemy"),
+        "preferred_endpoints": ("alchemy",),
     },
     "eth_getTransactionReceipt": {
         "batch_size": int(os.getenv("ALCHEMY_BATCH_SIZE", "100")),
-        "preferred_endpoints": ("publicnode", "ankr", "drpc", "alchemy"),
+        "preferred_endpoints": ("alchemy",),
     },
     "eth_getBlockByNumber": {
         "batch_size": BATCH_BLOCKS_LIMIT,
