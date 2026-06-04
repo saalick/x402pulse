@@ -28,6 +28,7 @@ import os
 import signal
 import sqlite3
 import sys
+import threading
 import time
 from contextlib import closing
 from dataclasses import dataclass
@@ -108,13 +109,18 @@ RPC_PACING_SECONDS = float(os.getenv("RPC_PACING_SECONDS", "0.05"))
 
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL_SECONDS", "12"))
 
-# When the AuthorizationUsed (EIP-3009 pass-through) path is enabled, the
-# backward-extension pass becomes ~50× slower per chunk because every
-# AuthorizationUsed event needs a tx.from lookup. To keep the real-time
-# tail from being blocked behind a multi-day backward replay, the backward
-# pass is opt-in. Set EXTEND_BACKWARD=true to run it. Existing historical
-# rows are preserved either way.
+# Forward backfill is what makes the site "alive" — set BACKFILL_HOURS
+# to whatever you want covered before the tail starts. With both event
+# paths enabled, ~10h of compute per 30 days of blocks is typical.
+#
+# Backward extension runs LATER, in a background thread, so the
+# real-time tail keeps running while older history fills in silently.
+# Toggle with EXTEND_BACKWARD; set the target depth with
+# EXTEND_BACKWARD_HOURS (defaults to BACKFILL_HOURS — set it higher to
+# extend beyond the initial window).
 EXTEND_BACKWARD = os.getenv("EXTEND_BACKWARD", "false").lower() == "true"
+EXTEND_BACKWARD_HOURS = float(os.getenv("EXTEND_BACKWARD_HOURS", str(BACKFILL_HOURS)))
+EXTEND_BACKWARD_BLOCKS = int(EXTEND_BACKWARD_HOURS * BLOCKS_PER_HOUR)
 
 CHAIN_NAME = "base"
 CHAIN_ID = 8453
@@ -870,6 +876,42 @@ def backfill_extend_backward(
     log.info("Backward extension complete. %s custodial + %s pass-through transfers.", total_t, total_a)
 
 
+def _open_thread_conn() -> sqlite3.Connection:
+    """Open a fresh SQLite connection for use on a background thread.
+
+    SQLite in WAL mode allows multiple connections from different threads
+    to read and write concurrently — writes are serialized internally —
+    so the backward extension thread and the foreground tail loop don't
+    fight, they just both insert into the same table.
+    """
+    conn = sqlite3.connect(DATABASE_URL, isolation_level=None, check_same_thread=False)
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA synchronous = NORMAL;")
+    return conn
+
+
+def _backward_thread_target(desired_low: int, current_low: int) -> None:
+    """Background entry point for the silent backward-extension pass.
+
+    Builds its own RPC pool + DB connection so it never touches the
+    foreground tail's state. Logs prefix with [backward] so the two
+    loops are distinguishable in the merged log stream.
+    """
+    log.info("[backward] thread starting — target %s ← %s (%s blocks)",
+             desired_low, current_low, current_low - desired_low)
+    conn: Optional[sqlite3.Connection] = None
+    try:
+        conn = _open_thread_conn()
+        bw_pool = build_pool(backfill_endpoints())
+        backfill_extend_backward(bw_pool, conn, desired_low, current_low)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("[backward] thread failed: %s", exc)
+    finally:
+        if conn is not None:
+            conn.close()
+    log.info("[backward] thread done")
+
+
 def follow(pool: W3Pool, conn: sqlite3.Connection) -> None:
     chunk = pool[0][0].chunk_blocks
     log.info("Tailing new blocks every %ss (chunk=%s via %s).",
@@ -919,44 +961,77 @@ def main() -> None:
         last_indexed = int(get_state(conn, "last_indexed_block") or 0)
 
         # FORWARD pass — index from where we left off up to current head.
-        # For a fresh DB (or post-migration reset) this also kicks off the
+        # For a fresh DB (or post-migration reset) this kicks off the
         # initial backfill window starting at head - BACKFILL_BLOCKS.
-        forward_start = (last_indexed + 1) if last_indexed else max(head - BACKFILL_BLOCKS, 1)
+        #
+        # If the operator shrinks BACKFILL_HOURS between runs, a stale
+        # checkpoint can sit far below the new window — without this
+        # reset we'd waste hours re-scanning blocks that fall outside it.
+        forward_start_default = max(head - BACKFILL_BLOCKS, 1)
+        if last_indexed and last_indexed < forward_start_default:
+            log.warning(
+                "Forward checkpoint %s is below BACKFILL_BLOCKS window (%s). "
+                "Resetting so forward catchup starts at the new window edge.",
+                last_indexed, forward_start_default,
+            )
+            set_state(conn, "last_indexed_block", "0")
+            last_indexed = 0
+
+        forward_start = (last_indexed + 1) if last_indexed else forward_start_default
         if forward_start <= head:
             backfill(bf_pool, conn, forward_start, head)
         else:
             log.info("Already caught up to head — skipping forward backfill.")
 
-        # BACKWARD pass — opt-in (EXTEND_BACKWARD=true). The AuthorizationUsed
-        # path makes backward extension slow; defaulting it off lets the tail
-        # follow start immediately so new pass-through txns flow in real time.
-        desired_low = max(1, head - BACKFILL_BLOCKS)
-        db_min = conn.execute(
-            "SELECT MIN(block_number) FROM transfers"
-        ).fetchone()[0]
-        if not EXTEND_BACKWARD:
+        # BACKWARD pass — spawned as a daemonless background thread so the
+        # foreground tail can start IMMEDIATELY. The thread opens its own
+        # SQLite connection and RPC pool; SQLite's WAL mode serializes
+        # writes from both threads safely.
+        backward_thread: Optional[threading.Thread] = None
+        if EXTEND_BACKWARD and not _stop:
+            extend_low = max(1, head - EXTEND_BACKWARD_BLOCKS)
+            db_min = conn.execute(
+                "SELECT MIN(block_number) FROM transfers"
+            ).fetchone()[0]
+            if db_min and db_min > extend_low:
+                log.info(
+                    "Spawning background backward extension: %s ← %s "
+                    "(target depth %.1f days)",
+                    extend_low, db_min, EXTEND_BACKWARD_HOURS / 24,
+                )
+                backward_thread = threading.Thread(
+                    target=_backward_thread_target,
+                    args=(extend_low, db_min),
+                    name="backward-extend",
+                    daemon=False,
+                )
+                backward_thread.start()
+            elif db_min:
+                log.info(
+                    "[backward] indexed window already reaches block %s "
+                    "(≤ desired %s) — nothing to extend.",
+                    db_min, extend_low,
+                )
+        else:
             log.info(
                 "Backward extension disabled (EXTEND_BACKWARD=false). "
-                "Set EXTEND_BACKWARD=true to fill historical pass-through.",
-            )
-        elif db_min and db_min > desired_low and not _stop:
-            log.info(
-                "Indexed window currently starts at block %s; BACKFILL_BLOCKS "
-                "wants %s. Extending backwards…",
-                db_min, desired_low,
-            )
-            backfill_extend_backward(bf_pool, conn, desired_low, db_min)
-        elif db_min:
-            log.info(
-                "Indexed window already reaches block %s (≤ desired %s). "
-                "Skipping backward extension.",
-                db_min, desired_low,
+                "Set true + EXTEND_BACKWARD_HOURS to silently fill history.",
             )
 
         # Tail pool: Alchemy first (low latency for small requests).
+        # Runs in the foreground so this process is the one that receives
+        # signals and drives shutdown for both itself and the backward thread.
         log.info("Building tail RPC pool…")
         tail_pool = build_pool(tail_endpoints())
         follow(tail_pool, conn)
+
+        # Shutdown — wait briefly for the backward thread to settle its
+        # current chunk so we don't leave the DB in an inconsistent state.
+        if backward_thread and backward_thread.is_alive():
+            log.info("Waiting up to 60s for backward thread to finish current chunk…")
+            backward_thread.join(timeout=60)
+            if backward_thread.is_alive():
+                log.warning("Backward thread still running at shutdown — DB will resume next start.")
 
     log.info("Indexer stopped.")
 
