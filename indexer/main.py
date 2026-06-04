@@ -549,7 +549,10 @@ METHOD_HINTS: dict[str, dict] = {
     },
     "eth_getBlockByNumber": {
         "batch_size": BATCH_BLOCKS_LIMIT,
-        "preferred_endpoints": None,
+        # publicnode 429s and dRPC 500s on batched eth_getBlockByNumber
+        # under sustained load — same pattern as getTx/getReceipt.
+        # Route directly to Alchemy to skip the wasted fallback dance.
+        "preferred_endpoints": ("alchemy",),
     },
 }
 
