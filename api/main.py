@@ -142,6 +142,17 @@ def _data_window(conn: sqlite3.Connection) -> dict:
 # blocks indexed in the same chunk as the earliest tx.
 BOUNDED_TOLERANCE_SECONDS = 3_600
 
+# All "total" queries (stats, leaderboards, profile totals) are clamped to
+# this trailing window so the dashboard reflects the indexer's intended
+# 30-day scope even if the DB still has older rows from a previous run.
+DISPLAY_WINDOW_DAYS = int(os.getenv("DISPLAY_WINDOW_DAYS", "30"))
+DISPLAY_WINDOW_SECONDS = DISPLAY_WINDOW_DAYS * 86_400
+
+
+def _window_start(now: Optional[int] = None) -> int:
+    """The cutoff timestamp below which we ignore data in display queries."""
+    return (now or now_ts()) - DISPLAY_WINDOW_SECONDS
+
 
 # ------------------------------------------------------------------ on-chain first-seen
 
@@ -224,9 +235,12 @@ def agent_first_seen(
 def stats(conn: sqlite3.Connection = Depends(get_db)) -> dict:
     now = now_ts()
     day_ago = now - 86_400
+    window_start = _window_start(now)
 
     total = conn.execute(
-        "SELECT COALESCE(SUM(amount_usdc), 0), COUNT(*) FROM transfers"
+        "SELECT COALESCE(SUM(amount_usdc), 0), COUNT(*) "
+        "FROM transfers WHERE timestamp >= ?",
+        (window_start,),
     ).fetchone()
 
     day = conn.execute(
@@ -237,16 +251,21 @@ def stats(conn: sqlite3.Connection = Depends(get_db)) -> dict:
     ).fetchone()
 
     return {
-        # NOTE: "total_*" here means "within data_window" — the indexer only
-        # has a bounded backfill, not all of x402 history. UIs should display
-        # data_window prominently so users know what's covered.
+        # "total_*" here = within the configured DISPLAY_WINDOW_DAYS, NOT all
+        # rows in the DB. data_window mirrors that window so the UI can show
+        # "last 30 days" without lying.
         "total_volume_usdc": float(total[0]),
         "total_transactions": int(total[1]),
         "volume_24h_usdc": float(day[0]),
         "transactions_24h": int(day[1]),
         "active_agents_24h": int(day[2]),
         "active_sellers_24h": int(day[3]),
-        "data_window": _data_window(conn),
+        "data_window": {
+            "since": window_start,
+            "until": now,
+            "days": float(DISPLAY_WINDOW_DAYS),
+            "rows": int(total[1]),
+        },
     }
 
 # ------------------------------------------------------------------ /volume
@@ -294,10 +313,11 @@ def agents_leaderboard(
         "       SUM(amount_usdc)      AS volume_usdc, "
         "       MAX(timestamp)        AS last_seen "
         "FROM transfers "
+        "WHERE timestamp >= ? "
         "GROUP BY from_address "
         "ORDER BY volume_usdc DESC "
         "LIMIT ?",
-        (limit,),
+        (_window_start(), limit),
     ).fetchall()
     return [
         {
@@ -322,10 +342,11 @@ def sellers_leaderboard(
         "       SUM(amount_usdc)      AS volume_usdc, "
         "       MAX(timestamp)        AS last_seen "
         "FROM transfers "
+        "WHERE timestamp >= ? "
         "GROUP BY to_address "
         "ORDER BY volume_usdc DESC "
         "LIMIT ?",
-        (limit,),
+        (_window_start(), limit),
     ).fetchall()
     return [
         {
@@ -1360,14 +1381,15 @@ def seller_profile(
     if not ADDRESS_RE.match(address):
         raise HTTPException(status_code=400, detail="invalid address format")
     addr = address.lower()
+    window_start = _window_start()
 
     summary = conn.execute(
         "SELECT COUNT(*) AS txns, "
         "       COALESCE(SUM(amount_usdc), 0) AS total, "
         "       MIN(timestamp) AS first_seen, "
         "       MAX(timestamp) AS last_seen "
-        "FROM transfers WHERE to_address = ?",
-        (addr,),
+        "FROM transfers WHERE to_address = ? AND timestamp >= ?",
+        (addr, window_start),
     ).fetchone()
 
     if not summary or not summary["txns"]:
@@ -1400,7 +1422,7 @@ def seller_profile(
             "txns": int(r["txns"]) if r else 0,
         })
 
-    # Top 5 payers all-time.
+    # Top 5 payers within the display window.
     top_payers = [
         {
             "address":      r["from_address"],
@@ -1411,9 +1433,9 @@ def seller_profile(
         for r in conn.execute(
             "SELECT from_address, COUNT(*) AS c, SUM(amount_usdc) AS v, "
             "       MAX(timestamp) AS last_seen "
-            "FROM transfers WHERE to_address = ? "
+            "FROM transfers WHERE to_address = ? AND timestamp >= ? "
             "GROUP BY from_address ORDER BY v DESC LIMIT 5",
-            (addr,),
+            (addr, window_start),
         ).fetchall()
     ]
 
@@ -1421,9 +1443,9 @@ def seller_profile(
     recent = [dict(r) for r in conn.execute(
         "SELECT tx_hash, block_number, timestamp, from_address, to_address, "
         "       amount_usdc, facilitator "
-        "FROM transfers WHERE to_address = ? "
+        "FROM transfers WHERE to_address = ? AND timestamp >= ? "
         "ORDER BY timestamp DESC, log_index DESC LIMIT 10",
-        (addr,),
+        (addr, window_start),
     ).fetchall()]
 
     first_seen_ts = int(summary["first_seen"])
@@ -1521,9 +1543,10 @@ def facilitators_stats(conn: sqlite3.Connection = Depends(get_db)) -> list[dict]
             COUNT(DISTINCT CASE WHEN timestamp >= ? THEN from_address END)
                                                                AS active_agents_24h
         FROM transfers
+        WHERE timestamp >= ?
         GROUP BY facilitator
         """,
-        (d1, d2, d1, d1),
+        (d1, d2, d1, d1, _window_start(now)),
     ).fetchall()
 
     total_volume_alltime = sum(r["total_volume_usdc"] for r in rows) or 1.0
@@ -1577,14 +1600,15 @@ def agent_profile(
     if not ADDRESS_RE.match(address):
         raise HTTPException(status_code=400, detail="invalid address format")
     addr = address.lower()
+    window_start = _window_start()
 
     summary = conn.execute(
         "SELECT COUNT(*)              AS txns, "
         "       SUM(amount_usdc)      AS total, "
         "       MIN(timestamp)        AS first_seen, "
         "       MAX(timestamp)        AS last_seen "
-        "FROM transfers WHERE from_address = ?",
-        (addr,),
+        "FROM transfers WHERE from_address = ? AND timestamp >= ?",
+        (addr, window_start),
     ).fetchone()
 
     if not summary or not summary["txns"]:
@@ -1597,9 +1621,9 @@ def agent_profile(
     # Facilitator breakdown.
     fac_rows = conn.execute(
         "SELECT facilitator, COUNT(*) AS txns, SUM(amount_usdc) AS volume "
-        "FROM transfers WHERE from_address = ? "
+        "FROM transfers WHERE from_address = ? AND timestamp >= ? "
         "GROUP BY facilitator ORDER BY volume DESC",
-        (addr,),
+        (addr, window_start),
     ).fetchall()
     facilitators = [
         {
@@ -1639,9 +1663,9 @@ def agent_profile(
     tx_rows = conn.execute(
         "SELECT tx_hash, block_number, timestamp, from_address, to_address, "
         "       amount_usdc, facilitator "
-        "FROM transfers WHERE from_address = ? "
+        "FROM transfers WHERE from_address = ? AND timestamp >= ? "
         "ORDER BY timestamp DESC, log_index DESC LIMIT 10",
-        (addr,),
+        (addr, window_start),
     ).fetchall()
     recent = [dict(r) for r in tx_rows]
 
@@ -1649,9 +1673,9 @@ def agent_profile(
     max_txns_hour = conn.execute(
         "SELECT MAX(c) FROM ("
         "  SELECT COUNT(*) AS c FROM transfers "
-        "  WHERE from_address = ? GROUP BY timestamp / 3600"
+        "  WHERE from_address = ? AND timestamp >= ? GROUP BY timestamp / 3600"
         ")",
-        (addr,),
+        (addr, window_start),
     ).fetchone()[0] or 0
 
     tags: list[str] = []
