@@ -150,13 +150,25 @@ class RpcEndpoint:
     chunk_blocks: int
 
 
-# Public RPCs in our preferred order. All three accept large (2000-block)
-# eth_getLogs ranges and require no API key.
+# Public RPCs in our preferred order. All accept large (2000-block)
+# eth_getLogs ranges and require no API key. publicnode is the key one
+# for the heavy methods — it accepts batched eth_getTransactionByHash and
+# eth_getTransactionReceipt at full size (verified 200/batch) without CU
+# budget. Routing slow methods there first keeps Alchemy CU in reserve.
 PUBLIC_RPCS: list[RpcEndpoint] = [
+    RpcEndpoint("publicnode",  "https://base-rpc.publicnode.com",  2000),
     RpcEndpoint("base-public", "https://mainnet.base.org",         2000),
     RpcEndpoint("llamarpc",    "https://base.llamarpc.com",        2000),
-    RpcEndpoint("publicnode",  "https://base-rpc.publicnode.com",  2000),
 ]
+
+
+def _ankr_endpoint() -> Optional[RpcEndpoint]:
+    """Ankr public RPC now requires auth. Opt-in via ANKR_BASE_URL
+    pointing at a private endpoint (sign up free at ankr.com → premium tab)."""
+    url = os.getenv("ANKR_BASE_URL")
+    if not url:
+        return None
+    return RpcEndpoint("ankr", url, 2000)
 
 
 def _alchemy_endpoint() -> Optional[RpcEndpoint]:
@@ -170,19 +182,44 @@ def _alchemy_endpoint() -> Optional[RpcEndpoint]:
     return RpcEndpoint("alchemy", url, chunk)
 
 
+def _drpc_endpoint() -> Optional[RpcEndpoint]:
+    """Build the dRPC endpoint if a DRPC_BASE_URL is configured.
+
+    Free public URL works without auth at https://lb.drpc.org/ogrpc?network=base
+    but a personal dkey from drpc.org gives you dedicated rate limits.
+    Pass the full URL (including ?dkey=) via DRPC_BASE_URL.
+    """
+    url = os.getenv("DRPC_BASE_URL")
+    if not url:
+        return None
+    return RpcEndpoint("drpc", url, 2000)
+
+
 def backfill_endpoints() -> list[RpcEndpoint]:
-    """Public RPCs first (big chunks, no rate limits); Alchemy as last-resort."""
-    pool = list(PUBLIC_RPCS)
-    alc = _alchemy_endpoint()
-    if alc:
-        pool.append(alc)
+    """Free providers first (publicnode / Ankr / dRPC), Alchemy as last fallback.
+
+    Order matters — _batched_jsonrpc_one tries pool members in sequence, so
+    the heavy getTx / getReceipt traffic lands on publicnode first (no CU
+    cost), falling through to Ankr/dRPC and Alchemy only on failure.
+    """
+    pool: list[RpcEndpoint] = list(PUBLIC_RPCS)
+    for opt in (_ankr_endpoint(), _drpc_endpoint(), _alchemy_endpoint()):
+        if opt:
+            pool.append(opt)
     return pool
 
 
 def tail_endpoints() -> list[RpcEndpoint]:
-    """Alchemy first (low latency for small requests); public as fallback."""
+    """Alchemy first (low latency for small requests); free providers as fallback."""
+    pool: list[RpcEndpoint] = []
     alc = _alchemy_endpoint()
-    return ([alc] if alc else []) + list(PUBLIC_RPCS)
+    if alc:
+        pool.append(alc)
+    pool.extend(PUBLIC_RPCS)
+    for opt in (_ankr_endpoint(), _drpc_endpoint()):
+        if opt:
+            pool.append(opt)
+    return pool
 
 
 W3Pool = list[tuple[RpcEndpoint, Web3]]
@@ -494,14 +531,18 @@ def fetch_authused_logs(pool: W3Pool, from_block: int, to_block: int) -> list[Lo
 # RPC_BATCH_CONCURRENCY=4 for ~5-10× more throughput.
 RPC_CONCURRENCY = int(os.getenv("RPC_BATCH_CONCURRENCY", "1"))
 
+# For getTx / getReceipt we prefer publicnode (verified 200/batch, free,
+# no CU) ahead of Ankr / dRPC / Alchemy. _batched_jsonrpc_one walks this
+# list in order — Alchemy only sees the traffic when everything free
+# above it has 429'd or failed.
 METHOD_HINTS: dict[str, dict] = {
     "eth_getTransactionByHash": {
         "batch_size": int(os.getenv("ALCHEMY_BATCH_SIZE", "100")),
-        "preferred_endpoints": ("alchemy",),
+        "preferred_endpoints": ("publicnode", "ankr", "drpc", "alchemy"),
     },
     "eth_getTransactionReceipt": {
         "batch_size": int(os.getenv("ALCHEMY_BATCH_SIZE", "100")),
-        "preferred_endpoints": ("alchemy",),
+        "preferred_endpoints": ("publicnode", "ankr", "drpc", "alchemy"),
     },
     "eth_getBlockByNumber": {
         "batch_size": BATCH_BLOCKS_LIMIT,
