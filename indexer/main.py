@@ -30,6 +30,7 @@ import sqlite3
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
@@ -471,21 +472,74 @@ def fetch_authused_logs(pool: W3Pool, from_block: int, to_block: int) -> list[Lo
 
 # ------------------------------------------------------------------ batched JSON-RPC
 
-def _batched_jsonrpc(
-    pool: W3Pool, method: str, params_list: list[list], batch_size: int = BATCH_BLOCKS_LIMIT,
-) -> list:
-    """Send a list of single-method JSON-RPC calls as one batched HTTP request.
+# Per-method tuning. Slow methods (getTx, getReceipt) go straight to
+# Alchemy — publicnode rate-limits these (429s) so falling back wastes a
+# roundtrip. getBlockByNumber stays on the default fallback chain.
+#
+# Empirical Alchemy free-tier limits (probed Jun 2026):
+#   batch_size 100  ✓  no errors
+#   batch_size 200  ✓  no errors (when sent serially)
+#   batch_size 500  ✗  ~76% of entries return CUPS errors
+# Concurrency × batch_size is the multiplier. With free tier's ~330 CUPS,
+# even concurrency=2 × 100 overruns when retries pile up. Sequential
+# (concurrency=1) gives predictable throughput without 429-thrash.
+# On Alchemy Growth or Scale, bump ALCHEMY_BATCH_SIZE=500 and
+# RPC_BATCH_CONCURRENCY=4 for ~5-10× more throughput.
+RPC_CONCURRENCY = int(os.getenv("RPC_BATCH_CONCURRENCY", "1"))
 
-    Returns results in the same order as `params_list`. Sub-chunks at
-    `batch_size` to stay below per-provider batch caps (~100 is universally
-    safe). Falls back across pool members on transport errors.
+METHOD_HINTS: dict[str, dict] = {
+    "eth_getTransactionByHash": {
+        "batch_size": int(os.getenv("ALCHEMY_BATCH_SIZE", "100")),
+        "preferred_endpoints": ("alchemy",),
+    },
+    "eth_getTransactionReceipt": {
+        "batch_size": int(os.getenv("ALCHEMY_BATCH_SIZE", "100")),
+        "preferred_endpoints": ("alchemy",),
+    },
+    "eth_getBlockByNumber": {
+        "batch_size": BATCH_BLOCKS_LIMIT,
+        "preferred_endpoints": None,
+    },
+}
+
+
+def _select_pool_for_method(pool: W3Pool, method: str) -> W3Pool:
+    """Return pool members preferred for this method, falling back to the
+    whole pool if no preferred endpoints are reachable."""
+    preferred = METHOD_HINTS.get(method, {}).get("preferred_endpoints")
+    if not preferred:
+        return pool
+    filtered = [(ep, w3) for ep, w3 in pool if ep.name in preferred]
+    return filtered or pool
+
+
+def _batched_jsonrpc(
+    pool: W3Pool, method: str, params_list: list[list], batch_size: Optional[int] = None,
+) -> list:
+    """Batched JSON-RPC with per-method tuning and within-chunk parallelism.
+
+    Returns results in the same order as `params_list`. Chunks at the
+    method's `batch_size` (defaults to METHOD_HINTS), then fires up to
+    RPC_CONCURRENCY batches concurrently over a ThreadPoolExecutor.
+    Each batch goes to the method's preferred endpoint first.
     """
     if not params_list:
         return []
-    out: list = []
-    for i in range(0, len(params_list), batch_size):
-        out.extend(_batched_jsonrpc_one(pool, method, params_list[i : i + batch_size]))
-    return out
+
+    hint = METHOD_HINTS.get(method, {})
+    if batch_size is None:
+        batch_size = hint.get("batch_size", BATCH_BLOCKS_LIMIT)
+    use_pool = _select_pool_for_method(pool, method)
+
+    chunks = [params_list[i : i + batch_size] for i in range(0, len(params_list), batch_size)]
+    if len(chunks) == 1:
+        return _batched_jsonrpc_one(use_pool, method, chunks[0])
+
+    # Fire chunks in parallel; preserve input order in the output.
+    workers = min(RPC_CONCURRENCY, len(chunks))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        results = list(ex.map(lambda c: _batched_jsonrpc_one(use_pool, method, c), chunks))
+    return [item for sublist in results for item in sublist]
 
 
 # Cache of (endpoint_name, method) pairs that have responded with an
@@ -496,7 +550,60 @@ def _batched_jsonrpc(
 _BAD_BATCH_PAIRS: set[tuple[str, str]] = set()
 
 
+class _TokenBucket:
+    """Simple per-second token bucket. Used to throttle Alchemy calls to
+    stay under its CUPS ceiling. consume(n) blocks until n tokens are
+    available, then deducts them. Refills smoothly at `rate` tokens/sec.
+    Thread-safe — the lock protects refill + decrement against the
+    backward-extension thread firing in parallel with tail follow.
+    """
+
+    def __init__(self, rate_per_sec: float, burst: Optional[float] = None) -> None:
+        self.rate = rate_per_sec
+        self.cap = burst if burst is not None else rate_per_sec
+        self.tokens = self.cap
+        self.last = time.time()
+        self.lock = threading.Lock()
+
+    def consume(self, n: float) -> None:
+        with self.lock:
+            now = time.time()
+            elapsed = now - self.last
+            self.tokens = min(self.cap, self.tokens + elapsed * self.rate)
+            self.last = now
+            if self.tokens >= n:
+                self.tokens -= n
+                return
+            need = n - self.tokens
+            self.tokens = 0
+            wait = need / self.rate
+        time.sleep(wait)
+
+
+# Throttle Alchemy calls to stay under its CUPS / monthly-CU ceiling.
+# Free tier: ~330 CUPS sustained + 100M CU/mo total. getTx=17 CU, getReceipt=15 CU.
+# Default 8 calls/sec ≈ 130 CUPS sustained ≈ ~330M CU/mo (under cap if not 24/7).
+# On Growth/Scale, bump ALCHEMY_CALL_RATE to 50+ for ~6× throughput.
+_ALCHEMY_CALL_RATE = float(os.getenv("ALCHEMY_CALL_RATE", "8"))
+_alchemy_bucket = _TokenBucket(_ALCHEMY_CALL_RATE, burst=_ALCHEMY_CALL_RATE * 2)
+
+
 def _batched_jsonrpc_one(pool: W3Pool, method: str, params_list: list[list]) -> list:
+    """Send one HTTP batch. Auto-retries per-entry errors (rate limits) up
+    to 3 times with backoff before returning Nones.
+
+    Free-tier RPCs sometimes return per-entry errors inside an otherwise-
+    healthy batch when CU/sec is exceeded — Alchemy is the main offender.
+    We collect the failed entries and retry just those, halving batch
+    size each round so the retry fits under the throttle.
+    """
+    return _batched_jsonrpc_with_retry(pool, method, params_list, attempt=0)
+
+
+def _batched_jsonrpc_with_retry(
+    pool: W3Pool, method: str, params_list: list[list],
+    attempt: int, max_attempts: int = 3,
+) -> list:
     payload = [
         {"jsonrpc": "2.0", "id": idx, "method": method, "params": params}
         for idx, params in enumerate(params_list)
@@ -506,20 +613,63 @@ def _batched_jsonrpc_one(pool: W3Pool, method: str, params_list: list[list]) -> 
         if (ep.name, method) in _BAD_BATCH_PAIRS:
             continue
         try:
+            # Throttle Alchemy specifically — its CUPS ceiling is what
+            # rate-limits us, the other RPCs use rougher per-second caps
+            # that publicnode already handles via 429 fallback.
+            if ep.name == "alchemy":
+                _alchemy_bucket.consume(len(params_list))
             r = _requests.post(ep.url, json=payload, timeout=60)
             r.raise_for_status()
             arr = r.json()
             if not isinstance(arr, list) or len(arr) != len(params_list):
-                # Remember this combo so the next chunk skips it silently.
                 _BAD_BATCH_PAIRS.add((ep.name, method))
                 log.info(
                     "RPC %s doesn't honour batched %s — skipping for the rest of session",
                     ep.name, method,
                 )
                 continue
-            # Responses can arrive out of order — sort by `id` to align with input.
+            # Sort responses by id so they align with input order.
             arr.sort(key=lambda x: x.get("id", 0))
-            return [resp.get("result") for resp in arr]
+
+            results: list = [None] * len(params_list)
+            failed_indices: list[int] = []
+            for i, resp in enumerate(arr):
+                if "error" in resp and resp["error"]:
+                    failed_indices.append(i)
+                else:
+                    results[i] = resp.get("result")
+
+            if failed_indices and attempt < max_attempts:
+                # Back off, halve batch size, and retry just the failed entries.
+                # The halving is critical: most per-entry errors are Alchemy
+                # CUPS overrun, which clears when we throw a smaller batch.
+                backoff = 1.0 * (2 ** attempt)  # 1s, 2s, 4s
+                time.sleep(backoff)
+                log.debug(
+                    "JSON-RPC %s via %s: %d/%d entries errored — retry %d "
+                    "with halved batch (sleep %.1fs)",
+                    method, ep.name, len(failed_indices), len(params_list),
+                    attempt + 1, backoff,
+                )
+                retry_params = [params_list[i] for i in failed_indices]
+                # Halve batch — split into two sequential calls if needed.
+                half = max(1, len(retry_params) // 2)
+                retry_results: list = []
+                for j in range(0, len(retry_params), half):
+                    retry_results.extend(_batched_jsonrpc_with_retry(
+                        pool, method, retry_params[j : j + half],
+                        attempt + 1, max_attempts,
+                    ))
+                for i, rr in zip(failed_indices, retry_results):
+                    results[i] = rr
+            elif failed_indices:
+                # Out of retries — log once at warning level.
+                log.warning(
+                    "JSON-RPC %s: %d/%d entries unresolved after %d retries",
+                    method, len(failed_indices), len(params_list), max_attempts,
+                )
+
+            return results
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
             log.warning(
@@ -750,13 +900,26 @@ def process_chunk(
 ) -> tuple[int, int]:
     """Run both indexing paths over one [from_block, to_block] chunk.
 
+    The custodial Transfer path is mandatory; the AuthUsed pass-through
+    path is isolated in a try/except so an RPC rate-limit storm can't
+    block forward progress. Skipped pass-through coverage gets picked up
+    again when the tail re-processes incoming blocks (and is not lost
+    permanently — the UNIQUE constraint dedupes against any later refill).
+
     Returns (transfers_inserted, authused_inserted).
     """
     transfer_logs = fetch_transfer_logs(pool, from_block, to_block)
     n_t = decode_and_insert_transfers(conn, pool, transfer_logs)
 
-    auth_logs = fetch_authused_logs(pool, from_block, to_block)
-    n_a = decode_and_insert_authused(conn, pool, auth_logs)
+    n_a = 0
+    try:
+        auth_logs = fetch_authused_logs(pool, from_block, to_block)
+        n_a = decode_and_insert_authused(conn, pool, auth_logs)
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "[pass-through] chunk %s-%s skipped (%s): %s",
+            from_block, to_block, exc.__class__.__name__, str(exc)[:120],
+        )
 
     return n_t, n_a
 
