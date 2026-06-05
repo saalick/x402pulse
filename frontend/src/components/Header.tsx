@@ -4,7 +4,6 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { MaintenanceBanner } from "./MaintenanceBanner";
 import { SearchBar } from "./SearchBar";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -47,7 +46,6 @@ export function Header() {
 
   return (
     <div className="sticky top-0 z-40">
-    <MaintenanceBanner />
     <header className="border-b border-white/5 bg-bg/80 backdrop-blur-md">
       <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:gap-5 sm:px-6 lg:h-16">
         <Link
@@ -76,8 +74,6 @@ export function Header() {
         </Link>
 
         <div className="ml-auto flex items-center gap-3 sm:gap-5">
-          <LiveBadge />
-
           {/* Desktop nav */}
           <nav className="hidden items-center gap-5 lg:flex">
             {NAV.map((n) => <NavItem key={n.href} link={n} active={pathname === n.href} />)}
@@ -186,16 +182,3 @@ function Hamburger({ open }: { open: boolean }) {
   );
 }
 
-function LiveBadge() {
-  return (
-    <div className="hidden items-center gap-2 rounded-full border border-brand/30 bg-brand/10 px-3 py-1.5 sm:flex">
-      <span className="relative inline-flex h-2 w-2">
-        <span className="absolute inline-flex h-full w-full animate-pulse-ring rounded-full bg-brand" />
-        <span className="relative inline-flex h-2 w-2 animate-pulse-dot rounded-full bg-brand" />
-      </span>
-      <span className="text-[11px] font-medium uppercase tracking-[0.18em] text-brand">
-        Live
-      </span>
-    </div>
-  );
-}
