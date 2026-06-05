@@ -33,7 +33,7 @@ export function NewAgentsFeed() {
   }, []);
 
   return (
-    <section className="card flex h-full min-h-[520px] flex-col p-5 shadow-card animate-fade-in-up">
+    <section className="card p-5 shadow-card animate-fade-in-up">
       <div className="mb-4 flex items-baseline justify-between">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-medium uppercase tracking-[0.18em] text-white/50">
@@ -47,11 +47,11 @@ export function NewAgentsFeed() {
       </div>
 
       {rows.length === 0 ? (
-        <div className="grid flex-1 place-items-center text-xs text-white/40">
+        <div className="grid h-[420px] place-items-center text-xs text-white/40">
           No new agents in the last 24h.
         </div>
       ) : (
-        <ul className="min-h-0 flex-1 divide-y divide-white/5 overflow-y-auto rounded-lg border border-white/5">
+        <ul className="h-[420px] divide-y divide-white/5 overflow-y-auto rounded-lg border border-white/5">
           {rows.map((a) => {
             const ageSec = Math.max(0, Math.floor(Date.now() / 1000 - a.first_seen));
             const hot = ageSec < ONE_HOUR;
