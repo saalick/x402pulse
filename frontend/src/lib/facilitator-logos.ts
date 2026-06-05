@@ -12,6 +12,7 @@
  * the API returns.
  */
 export const FACILITATOR_DOMAINS: Record<string, string> = {
+  // Already-mapped from prior research
   bitrefill:        "bitrefill.com",
   coinbase:         "coinbase.com",
   daydreams:        "daydreams.fun",
@@ -28,6 +29,21 @@ export const FACILITATOR_DOMAINS: Record<string, string> = {
   questflow:        "questflow.ai",
   ultravioletadao:  "ultravioleta.org",
   xecho:            "xecho.ai",
+  // Added after full ecosystem sweep (facilitators.x402.watch + x402.org/ecosystem)
+  "402104":         "load.network",
+  anyspend:         "anyspend.com",
+  aurracloud:       "aurracloud.com",
+  codenut:          "codenut.ai",
+  corbits:          "corbits.dev",
+  dexter:           "dexter.cash",
+  fluxa:            "fluxapay.xyz",
+  kamiyo:           "kamiyo.ai",
+  mogami:           "mogami.tech",
+  openfacilitator:  "openfacilitator.io",
+  openmid:          "openmid.xyz",
+  openx402:         "openx402.ai",
+  x402jobs:         "x402.jobs",
+  x402rs:           "x402.rs",
 };
 
 /**
