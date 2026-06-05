@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, AgentRow, SellerRow, TrustScore } from "@/lib/api";
 import { formatUsdc, shortAddress, timeAgo } from "@/lib/format";
+import { facilitatorLogoUrl } from "@/lib/facilitator-logos";
 
 const REFRESH_MS = 30_000;
 
@@ -189,8 +190,22 @@ function BoardCard({
 }
 
 export function FacilitatorBadge({ name }: { name: string }) {
+  const logoUrl = facilitatorLogoUrl(name);
   return (
-    <span className="rounded-full border border-brand/25 bg-brand/10 px-2 py-[2px] text-[10px] font-medium uppercase tracking-wider text-brand">
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-brand/25 bg-brand/10 py-[2px] pl-1 pr-2 text-[10px] font-medium uppercase tracking-wider text-brand">
+      {logoUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={logoUrl}
+          alt=""
+          width={12}
+          height={12}
+          className="h-3 w-3 shrink-0 rounded-sm bg-white/80 object-contain"
+          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+        />
+      ) : (
+        <span className="ml-1" />
+      )}
       {name}
     </span>
   );

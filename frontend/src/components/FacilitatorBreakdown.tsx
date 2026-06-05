@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, FacilitatorStats } from "@/lib/api";
 import { formatUsdc } from "@/lib/format";
+import { facilitatorLogoUrl } from "@/lib/facilitator-logos";
 
 const REFRESH_MS = 30_000;
 
@@ -168,10 +169,22 @@ function SortHeader({
 
 function ShareRow({ row, max }: { row: FacilitatorStats; max: number }) {
   const widthPct = Math.max(2, (row.market_share_pct / max) * 100);
+  const logoUrl = facilitatorLogoUrl(row.name);
   return (
     <div className="flex items-center gap-3">
-      <span className="w-28 truncate text-xs uppercase tracking-wider text-white/60">
-        {row.name}
+      <span className="flex w-28 items-center gap-1.5 truncate text-xs uppercase tracking-wider text-white/60">
+        {logoUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={logoUrl}
+            alt=""
+            width={14}
+            height={14}
+            className="h-3.5 w-3.5 shrink-0 rounded-sm bg-white/80 object-contain"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+          />
+        )}
+        <span className="truncate">{row.name}</span>
       </span>
       <div className="relative h-3 flex-1 overflow-hidden rounded-full bg-white/[0.04]">
         <div
