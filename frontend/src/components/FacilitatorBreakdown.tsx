@@ -1,13 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, FacilitatorStats } from "@/lib/api";
 import { formatUsdc } from "@/lib/format";
 
 const REFRESH_MS = 30_000;
 
+type SortKey = "volume" | "txns" | "avg" | "share";
+type SortDir = "asc" | "desc";
+
+const SORT_GETTERS: Record<SortKey, (r: FacilitatorStats) => number> = {
+  volume: (r) => r.volume_24h,
+  txns:   (r) => r.total_transactions,
+  avg:    (r) => r.avg_payment_usdc,
+  share:  (r) => r.market_share_pct,
+};
+
 export function FacilitatorBreakdown() {
   const [rows, setRows] = useState<FacilitatorStats[]>([]);
+  const [sortKey, setSortKey] = useState<SortKey>("volume");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   useEffect(() => {
     let cancelled = false;
@@ -24,6 +36,20 @@ export function FacilitatorBreakdown() {
 
   const maxShare = Math.max(0.0001, ...rows.map((r) => r.market_share_pct));
 
+  // Table rows respect the user's sort; the share bars at the top stay
+  // ordered by market share regardless so the visual size comparison
+  // remains intuitive (biggest bar always on top).
+  const sortedRows = useMemo(() => {
+    const getter = SORT_GETTERS[sortKey];
+    const dir = sortDir === "desc" ? -1 : 1;
+    return [...rows].sort((a, b) => (getter(a) - getter(b)) * dir);
+  }, [rows, sortKey, sortDir]);
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+    else { setSortKey(key); setSortDir("desc"); }
+  };
+
   return (
     <section className="card p-5 shadow-card animate-fade-in-up">
       <div className="mb-4 flex items-baseline justify-between">
@@ -32,7 +58,7 @@ export function FacilitatorBreakdown() {
             Facilitator Market Share
           </h2>
           <p className="mt-1 text-xs text-white/40">
-            All-time USDC volume, with last-24h metrics and change vs prior 24h
+            Click a column header to sort
           </p>
         </div>
         <span className="text-xs text-white/40 tabular">{rows.length} active</span>
@@ -44,28 +70,47 @@ export function FacilitatorBreakdown() {
         </div>
       ) : (
         <>
-          {/* Horizontal market-share bars */}
+          {/* Horizontal market-share bars (always sorted by market share) */}
           <div className="mb-5 space-y-2">
             {rows.map((r) => (
               <ShareRow key={r.name} row={r} max={maxShare} />
             ))}
           </div>
 
-          {/* Detailed table */}
+          {/* Detailed sortable table */}
           <div className="overflow-x-auto rounded-lg border border-white/5">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-white/[0.02] text-left text-[11px] uppercase tracking-wider text-white/40">
                   <th className="px-3 py-2 font-medium">Facilitator</th>
-                  <th className="px-3 py-2 font-medium text-right">Volume (24h)</th>
-                  <th className="px-3 py-2 font-medium text-right">Txns</th>
-                  <th className="px-3 py-2 font-medium text-right">Avg Payment</th>
-                  <th className="px-3 py-2 font-medium text-right">Change</th>
-                  <th className="px-3 py-2 font-medium text-right">Market Share</th>
+                  <SortHeader
+                    label="Volume (24h)"
+                    active={sortKey === "volume"}
+                    dir={sortDir}
+                    onClick={() => toggleSort("volume")}
+                  />
+                  <SortHeader
+                    label="Txns"
+                    active={sortKey === "txns"}
+                    dir={sortDir}
+                    onClick={() => toggleSort("txns")}
+                  />
+                  <SortHeader
+                    label="Avg Payment"
+                    active={sortKey === "avg"}
+                    dir={sortDir}
+                    onClick={() => toggleSort("avg")}
+                  />
+                  <SortHeader
+                    label="Market Share"
+                    active={sortKey === "share"}
+                    dir={sortDir}
+                    onClick={() => toggleSort("share")}
+                  />
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
-                {rows.map((r) => (
+                {sortedRows.map((r) => (
                   <tr key={r.name} className="transition-colors hover:bg-brand/5">
                     <td className="px-3 py-2">
                       <span className="rounded-full border border-brand/25 bg-brand/10 px-2 py-[2px] text-[10px] font-medium uppercase tracking-wider text-brand">
@@ -81,9 +126,6 @@ export function FacilitatorBreakdown() {
                     <td className="px-3 py-2 text-right tabular text-white/70">
                       ${formatUsdc(r.avg_payment_usdc)}
                     </td>
-                    <td className="px-3 py-2 text-right tabular">
-                      <Change pct={r.volume_change_pct} />
-                    </td>
                     <td className="px-3 py-2 text-right tabular text-brand">
                       {r.market_share_pct.toFixed(2)}%
                     </td>
@@ -95,6 +137,32 @@ export function FacilitatorBreakdown() {
         </>
       )}
     </section>
+  );
+}
+
+function SortHeader({
+  label, active, dir, onClick,
+}: {
+  label: string;
+  active: boolean;
+  dir: SortDir;
+  onClick: () => void;
+}) {
+  return (
+    <th className="px-3 py-2 text-right font-medium">
+      <button
+        type="button"
+        onClick={onClick}
+        className={`inline-flex items-center gap-1 transition-colors hover:text-brand ${
+          active ? "text-brand" : "text-white/40"
+        }`}
+      >
+        {label}
+        <span className="inline-block w-2 text-[10px] leading-none">
+          {active ? (dir === "desc" ? "↓" : "↑") : ""}
+        </span>
+      </button>
+    </th>
   );
 }
 
@@ -120,15 +188,4 @@ function ShareRow({ row, max }: { row: FacilitatorStats; max: number }) {
       </span>
     </div>
   );
-}
-
-function Change({ pct }: { pct: number }) {
-  if (pct === 0) return <span className="text-white/40">–</span>;
-  const positive = pct > 0;
-  const cls = positive ? "text-brand" : "text-red-400";
-  const arrow = positive ? "↑" : "↓";
-  const display = Math.abs(pct) >= 1000
-    ? `${(pct / 1000).toFixed(1)}k%`
-    : `${pct.toFixed(1)}%`;
-  return <span className={cls}>{arrow} {display}</span>;
 }
