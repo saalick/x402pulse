@@ -44,7 +44,7 @@ export function LiveFeed() {
   }, []);
 
   return (
-    <section className="card p-5 shadow-card animate-fade-in-up">
+    <section className="card flex h-full min-h-[520px] flex-col p-5 shadow-card animate-fade-in-up">
       <div className="mb-4 flex items-baseline justify-between">
         <div>
           <h2 className="text-sm font-medium uppercase tracking-[0.18em] text-white/50">
@@ -58,11 +58,11 @@ export function LiveFeed() {
       </div>
 
       {rows.length === 0 ? (
-        <div className="grid h-40 place-items-center text-xs text-white/40">
+        <div className="grid flex-1 place-items-center text-xs text-white/40">
           Waiting for the next payment…
         </div>
       ) : (
-        <ul className="max-h-[420px] divide-y divide-white/5 overflow-y-auto rounded-lg border border-white/5">
+        <ul className="min-h-0 flex-1 divide-y divide-white/5 overflow-y-auto rounded-lg border border-white/5">
           {rows.map((row) => {
             const isNew = !seenRef.current.has(row.tx_hash);
             if (isNew) seenRef.current.add(row.tx_hash);
