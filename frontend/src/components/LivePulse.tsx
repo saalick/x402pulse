@@ -23,10 +23,10 @@ const FEED_POLL_MS = 5_000;
 const STATS_POLL_MS = 30_000;
 const DECAY = 0.92;
 const PULSE_BASE = 0.95;
-const PULSE_STACK = 0.25;
 
 const POPUP_MS = 3_000;       // each popup visible for 3s
 const MAX_POPUPS = 4;          // max visible at once
+const POPUP_SPAWN_MS = 600;   // min gap between popup spawns during a burst
 
 type Popup = {
   id: string;
@@ -42,13 +42,19 @@ export function LivePulse() {
   const [popups, setPopups] = useState<Popup[]>([]);
 
   const samplesRef = useRef<number[]>(new Array(SAMPLES).fill(0));
-  const pendingPulsesRef = useRef(0);
-  const pendingPopupsRef = useRef<Popup[]>([]);
+  // Queue of pulses to release one-per-tick across the poll interval —
+  // this is what gives the waveform a continuous trickle instead of one
+  // big spike every 5 seconds.
+  const pulseQueueRef = useRef<number[]>([]);
+  // Pending tx rows waiting to spawn a popup. Released one per popup-spawn
+  // tick so popups appear smoothly across the interval too.
+  const pendingTxQueueRef = useRef<FeedRow[]>([]);
   const popupsRef = useRef<Popup[]>([]);
   const seenRef = useRef<Set<string>>(new Set());
   const firstLoadRef = useRef(true);
+  const popupSpawnAccRef = useRef(0);   // ms accumulator for popup spawn cadence
 
-  // Poll /feed → queue waveform pulses + tx popups
+  // Poll /feed → enqueue waveform pulses + tx-popup spawn requests
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -67,16 +73,14 @@ export function LivePulse() {
       if (!fresh.length) return;
       fresh.forEach((r) => seenRef.current.add(r.tx_hash));
 
-      pendingPulsesRef.current += fresh.length;
-      const now = Date.now();
-      const newPopups: Popup[] = fresh.slice(0, MAX_POPUPS).map((r) => ({
-        id: r.tx_hash,
-        from: r.from_address,
-        amount: r.amount_usdc,
-        facilitator: r.facilitator,
-        spawnedAt: now,
-      }));
-      pendingPopupsRef.current.push(...newPopups);
+      // Each fresh tx becomes one queued pulse. The tick loop will dequeue
+      // one per 100 ms tick, spreading N txns over N*100 ms of animation
+      // — which feels continuous instead of bursty.
+      for (let i = 0; i < fresh.length; i++) pulseQueueRef.current.push(1);
+
+      // Stagger popup spawn requests over the poll interval as well so
+      // they don't all materialize at once and crowd the right edge.
+      pendingTxQueueRef.current.push(...fresh);
     };
     load();
     const id = setInterval(load, FEED_POLL_MS);
@@ -97,31 +101,59 @@ export function LivePulse() {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
-  // Animation tick — shift waveform, decay, drain popup queue, expire old ones.
+  // Animation tick — shift waveform, decay, drain pulse + popup queues, expire old.
   useEffect(() => {
     const id = setInterval(() => {
       const arr = samplesRef.current;
       for (let i = 0; i < arr.length - 1; i++) {
         arr[i] = arr[i + 1] * DECAY;
       }
-      const pulses = pendingPulsesRef.current;
-      arr[arr.length - 1] = pulses > 0
-        ? PULSE_BASE + (pulses - 1) * PULSE_STACK
-        : 0;
-      pendingPulsesRef.current = 0;
-
-      // Drain pending popups + expire old ones in one pass.
-      const now = Date.now();
-      if (pendingPopupsRef.current.length || popupsRef.current.length) {
-        const incoming = pendingPopupsRef.current;
-        pendingPopupsRef.current = [];
-        const next = [...incoming, ...popupsRef.current]
-          .filter((p) => now - p.spawnedAt < POPUP_MS)
-          .slice(0, MAX_POPUPS);
-        popupsRef.current = next;
-        setPopups(next);
+      // Dequeue ONE pulse per tick — that's what gives the waveform a
+      // continuous trickle. If many pulses are queued they spread out
+      // across (queue.length * TICK_MS) of animation time.
+      const queued = pulseQueueRef.current.length;
+      if (queued > 0) {
+        pulseQueueRef.current.shift();
+        arr[arr.length - 1] = PULSE_BASE;
+      } else {
+        arr[arr.length - 1] = 0;
       }
 
+      const now = Date.now();
+
+      // Spawn one popup roughly every POPUP_SPAWN_MS while txns are queued,
+      // so popups appear gradually instead of N at once.
+      popupSpawnAccRef.current += TICK_MS;
+      if (
+        pendingTxQueueRef.current.length > 0 &&
+        popupSpawnAccRef.current >= POPUP_SPAWN_MS
+      ) {
+        popupSpawnAccRef.current = 0;
+        const r = pendingTxQueueRef.current.shift()!;
+        popupsRef.current = [
+          ...popupsRef.current,
+          {
+            id: r.tx_hash,
+            from: r.from_address,
+            amount: r.amount_usdc,
+            facilitator: r.facilitator,
+            spawnedAt: now,
+          },
+        ];
+      }
+
+      // Expire old popups in every tick.
+      if (popupsRef.current.length) {
+        const next = popupsRef.current
+          .filter((p) => now - p.spawnedAt < POPUP_MS)
+          .slice(-MAX_POPUPS);
+        if (next.length !== popupsRef.current.length) {
+          popupsRef.current = next;
+        }
+      }
+
+      // Push a fresh state object so React notices new popups + waveform.
+      setPopups(popupsRef.current.slice());
       setTick((t) => (t + 1) % 1_000_000);
     }, TICK_MS);
     return () => clearInterval(id);
