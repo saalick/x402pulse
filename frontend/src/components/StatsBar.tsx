@@ -31,14 +31,10 @@ export function StatsBar() {
     };
   }, []);
 
-  // Indexer is configured for the last 30 days. If for whatever reason the
-  // DB ends up with a different range, fall through to a literal day count.
+  // Sub-label tracks whatever window the API reports, so DISPLAY_WINDOW_DAYS
+  // can be tuned server-side and the dashboard stays accurate without a deploy.
   const days = stats?.data_window.days ?? 0;
-  const totalSub = !days
-    ? "indexing…"
-    : days <= 31
-      ? "last 30 days"
-      : `last ${days.toFixed(0)} days`;
+  const totalSub = !days ? "indexing…" : `last ${days.toFixed(0)} days`;
 
   return (
     <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

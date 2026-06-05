@@ -228,12 +228,12 @@ function StatGrid({ profile }: { profile: AgentProfile }) {
       <Stat
         label="Total Spent"
         value={`$${formatUsdc(profile.total_spent_usdc)}`}
-        sub="USDC, last 30 days"
+        sub="USDC, last 7 days"
       />
       <Stat
         label="Transactions"
         value={profile.total_transactions.toLocaleString()}
-        sub="last 30 days"
+        sub="last 7 days"
       />
       <OnChainFirstSeen
         address={profile.address}
