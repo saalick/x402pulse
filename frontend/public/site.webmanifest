@@ -1,0 +1,13 @@
+{
+  "name": "x402pulse",
+  "short_name": "x402pulse",
+  "description": "Real-time analytics for x402 agent payments on Base.",
+  "icons": [
+    { "src": "/android-chrome-192x192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/android-chrome-512x512.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "theme_color": "#00ff88",
+  "background_color": "#0a0a0a",
+  "display": "standalone",
+  "start_url": "/"
+}
