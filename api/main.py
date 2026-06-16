@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -77,6 +78,10 @@ def db() -> Iterator[sqlite3.Connection]:
     may pick a different thread. SQLite connections are thread-affine by
     default and refuse to cross thread boundaries. We never share a single
     connection across requests, so disabling the check is safe.
+
+    `timeout=30` (up from 5) gives slow queries headroom when many users
+    hit the dashboard at once. The combination of multiple uvicorn workers
+    + the in-memory cache below keeps p95 well under that limit anyway.
     """
     if not DB_PATH.exists():
         raise HTTPException(
@@ -84,12 +89,40 @@ def db() -> Iterator[sqlite3.Connection]:
             detail=f"Database not found at {DB_PATH}. Is the indexer running?",
         )
     uri = f"file:{DB_PATH}?mode=ro"
-    conn = sqlite3.connect(uri, uri=True, timeout=5, check_same_thread=False)
+    conn = sqlite3.connect(uri, uri=True, timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
     finally:
         conn.close()
+
+
+# ------------------------------------------------------------------ cache
+
+# Per-worker in-memory TTL cache for endpoints whose results are identical
+# for every visitor (stats, leaderboards, market share, distribution etc.).
+# Without this, every dashboard tab triggers fresh DB queries on every poll
+# — and SQLite serializes those, which is what kills the site under load.
+# With it, the first request in each TTL window pays the DB cost and every
+# concurrent visitor in that window reads from RAM.
+
+_CACHE: dict[str, tuple[float, object]] = {}
+_CACHE_LOCK = threading.Lock()
+
+
+def _cache_get(key: str, ttl_seconds: float):
+    """Return the cached value if present and fresh, else None."""
+    now = time.time()
+    with _CACHE_LOCK:
+        entry = _CACHE.get(key)
+        if entry and (now - entry[0]) < ttl_seconds:
+            return entry[1]
+    return None
+
+
+def _cache_put(key: str, value: object) -> None:
+    with _CACHE_LOCK:
+        _CACHE[key] = (time.time(), value)
 
 
 def get_db() -> Iterator[sqlite3.Connection]:
@@ -233,6 +266,10 @@ def agent_first_seen(
 
 @app.get("/stats")
 def stats(conn: sqlite3.Connection = Depends(get_db)) -> dict:
+    cached = _cache_get("stats", ttl_seconds=10)
+    if cached is not None:
+        return cached
+
     now = now_ts()
     day_ago = now - 86_400
     window_start = _window_start(now)
@@ -250,7 +287,7 @@ def stats(conn: sqlite3.Connection = Depends(get_db)) -> dict:
         (day_ago,),
     ).fetchone()
 
-    return {
+    result = {
         # "total_*" here = within the configured DISPLAY_WINDOW_DAYS, NOT all
         # rows in the DB. data_window mirrors that window so the UI can show
         # "last 30 days" without lying.
@@ -267,6 +304,8 @@ def stats(conn: sqlite3.Connection = Depends(get_db)) -> dict:
             "rows": int(total[1]),
         },
     }
+    _cache_put("stats", result)
+    return result
 
 # ------------------------------------------------------------------ /volume
 
@@ -307,6 +346,11 @@ def agents_leaderboard(
     limit: int = Query(20, ge=1, le=200),
     conn: sqlite3.Connection = Depends(get_db),
 ) -> list[dict]:
+    cache_key = f"agents_leaderboard:{limit}"
+    cached = _cache_get(cache_key, ttl_seconds=15)
+    if cached is not None:
+        return cached
+
     rows = conn.execute(
         "SELECT from_address AS address, "
         "       COUNT(*)              AS transactions, "
@@ -319,7 +363,7 @@ def agents_leaderboard(
         "LIMIT ?",
         (_window_start(), limit),
     ).fetchall()
-    return [
+    result = [
         {
             "address": r["address"],
             "transactions": int(r["transactions"]),
@@ -328,6 +372,8 @@ def agents_leaderboard(
         }
         for r in rows
     ]
+    _cache_put(cache_key, result)
+    return result
 
 
 @app.get("/sellers/leaderboard")
@@ -335,6 +381,11 @@ def sellers_leaderboard(
     limit: int = Query(20, ge=1, le=200),
     conn: sqlite3.Connection = Depends(get_db),
 ) -> list[dict]:
+    cache_key = f"sellers_leaderboard:{limit}"
+    cached = _cache_get(cache_key, ttl_seconds=15)
+    if cached is not None:
+        return cached
+
     rows = conn.execute(
         "SELECT to_address AS address, "
         "       facilitator, "
@@ -348,7 +399,7 @@ def sellers_leaderboard(
         "LIMIT ?",
         (_window_start(), limit),
     ).fetchall()
-    return [
+    result = [
         {
             "address": r["address"],
             "facilitator": r["facilitator"],
@@ -358,6 +409,8 @@ def sellers_leaderboard(
         }
         for r in rows
     ]
+    _cache_put(cache_key, result)
+    return result
 
 # ------------------------------------------------------------------ /feed
 
@@ -366,6 +419,11 @@ def feed(
     limit: int = Query(50, ge=1, le=500),
     conn: sqlite3.Connection = Depends(get_db),
 ) -> list[dict]:
+    cache_key = f"feed:{limit}"
+    cached = _cache_get(cache_key, ttl_seconds=3)
+    if cached is not None:
+        return cached
+
     rows = conn.execute(
         "SELECT tx_hash, block_number, timestamp, from_address, to_address, "
         "       amount_usdc, facilitator "
@@ -374,7 +432,9 @@ def feed(
         "LIMIT ?",
         (limit,),
     ).fetchall()
-    return [dict(r) for r in rows]
+    result = [dict(r) for r in rows]
+    _cache_put(cache_key, result)
+    return result
 
 # ------------------------------------------------------------------ /alerts
 
@@ -1525,6 +1585,10 @@ def new_agents(conn: sqlite3.Connection = Depends(get_db)) -> list[dict]:
 @app.get("/facilitators/stats")
 def facilitators_stats(conn: sqlite3.Connection = Depends(get_db)) -> list[dict]:
     """Per-facilitator KPIs: all-time totals, 24h volume + change, market share, active agents."""
+    cached = _cache_get("facilitators_stats", ttl_seconds=20)
+    if cached is not None:
+        return cached
+
     now = now_ts()
     d1 = now - 86_400
     d2 = now - 172_800
@@ -1571,6 +1635,7 @@ def facilitators_stats(conn: sqlite3.Connection = Depends(get_db)) -> list[dict]
             "active_agents_24h":  int(r["active_agents_24h"]),
         })
     out.sort(key=lambda f: f["total_volume_usdc"], reverse=True)
+    _cache_put("facilitators_stats", out)
     return out
 
 # ------------------------------------------------------------------ /health-score

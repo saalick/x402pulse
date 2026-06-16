@@ -24,9 +24,15 @@ python -u indexer/main.py 2>&1 | sed -u 's/^/[indexer] /' &
 INDEXER_PID=$!
 
 # API in background too, so we can wait on either child.
+# --workers N spawns N independent processes so concurrent users don't
+# serialize through a single event loop. Tune via UVICORN_WORKERS env;
+# each worker uses ~80-120 MB. SQLite with WAL mode handles multiple
+# read-only processes hitting the same DB just fine.
+UVICORN_WORKERS="${UVICORN_WORKERS:-3}"
 uvicorn api.main:app \
     --host 0.0.0.0 \
     --port "${PORT}" \
+    --workers "${UVICORN_WORKERS}" \
     --log-level info 2>&1 | sed -u 's/^/[api]     /' &
 UVICORN_PID=$!
 
