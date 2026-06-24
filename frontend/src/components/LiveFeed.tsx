@@ -92,6 +92,7 @@ function FeedItem({ row, fresh }: { row: FeedRow; fresh: boolean }) {
             >
               {shortAddress(row.from_address)}
             </Link>
+            {row.agent_tag && <AgentTagBadge tag={row.agent_tag} />}
             <span className="text-white/30">→</span>
             <Link
               href={`/seller/${row.to_address}`}
@@ -118,5 +119,20 @@ function FeedItem({ row, fresh }: { row: FeedRow; fresh: boolean }) {
         <div className="text-[10px] uppercase tracking-wider text-white/30">USDC</div>
       </div>
     </li>
+  );
+}
+
+function AgentTagBadge({ tag }: { tag: string }) {
+  const isHermes = tag.toLowerCase() === "hermes";
+  return (
+    <span
+      className={`inline-flex items-center rounded px-1.5 py-0.5 text-[9px] font-semibold tracking-wider uppercase leading-none border ${
+        isHermes
+          ? "bg-indigo-500/10 border-indigo-500/20 text-indigo-400"
+          : "bg-brand/10 border-brand/20 text-brand"
+      }`}
+    >
+      {isHermes ? "🪐 hermes" : `⚡ ${tag}`}
+    </span>
   );
 }

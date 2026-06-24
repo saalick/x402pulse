@@ -170,6 +170,23 @@ function ProfileHero({ profile }: { profile: AgentProfile }) {
         <h1 className="mt-1 break-all font-mono text-xl text-white">
           {profile.address}
         </h1>
+        {profile.ecosystem_tag && (
+          <div className={`mt-2.5 flex items-center gap-2 rounded-lg border px-3.5 py-2.5 text-xs shadow-sm animate-fade-in ${
+            profile.ecosystem_tag.toLowerCase() === "hermes"
+              ? "border-indigo-500/25 bg-indigo-500/10 text-indigo-300"
+              : "border-brand/25 bg-brand/10 text-brand"
+          }`}>
+            <span className="text-sm">{profile.ecosystem_tag.toLowerCase() === "hermes" ? "🪐" : "⚡"}</span>
+            <div>
+              This agent is verified as part of the <strong className="font-semibold uppercase tracking-wider">{profile.ecosystem_tag}</strong> desktop companion network.
+              {profile.ecosystem_metadata && profile.ecosystem_metadata.name && (
+                <span className="ml-1.5 opacity-80 text-[11px] font-mono bg-white/5 px-1.5 py-0.5 rounded border border-white/5">
+                  name: {profile.ecosystem_metadata.name}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <CopyAddressButton address={profile.address} />
           <span className="font-mono text-xs text-white/40">

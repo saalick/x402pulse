@@ -18,6 +18,7 @@ Endpoints (all JSON, CORS open):
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sqlite3
@@ -25,8 +26,11 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, Literal, Optional
+from typing import Any, Iterator, Literal, Optional
 
+from eth_account import Account
+from eth_account.messages import encode_defunct
+from pydantic import BaseModel, Field
 import requests
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Path as PathParam, Query
@@ -425,10 +429,11 @@ def feed(
         return cached
 
     rows = conn.execute(
-        "SELECT tx_hash, block_number, timestamp, from_address, to_address, "
-        "       amount_usdc, facilitator "
-        "FROM transfers "
-        "ORDER BY timestamp DESC, log_index DESC "
+        "SELECT t.tx_hash, t.block_number, t.timestamp, t.from_address, t.to_address, "
+        "       t.amount_usdc, t.facilitator, tg.tag AS agent_tag "
+        "FROM transfers t "
+        "LEFT JOIN agent_tags tg ON t.from_address = tg.address "
+        "ORDER BY t.timestamp DESC, t.log_index DESC "
         "LIMIT ?",
         (limit,),
     ).fetchall()
@@ -1743,7 +1748,18 @@ def agent_profile(
         (addr, window_start),
     ).fetchone()[0] or 0
 
+    # Fetch ecosystem tag
+    tag_row = conn.execute(
+        "SELECT tag, metadata FROM agent_tags WHERE address = ?",
+        (addr,),
+    ).fetchone()
+    ecosystem_tag = tag_row["tag"] if tag_row else None
+    ecosystem_metadata = json.loads(tag_row["metadata"]) if tag_row and tag_row["metadata"] else None
+
     tags: list[str] = []
+    if ecosystem_tag:
+        tags.append(f"{ecosystem_tag.capitalize()} Agent")
+
     if avg < TAG_MICRO_AVG_USDC:
         tags.append("Micro-payer")
     if total > TAG_POWER_TOTAL_USDC:
@@ -1781,9 +1797,101 @@ def agent_profile(
         "hourly_24h": hourly,
         "facilitators": facilitators,
         "recent_transactions": recent,
+        "ecosystem_tag": ecosystem_tag,
+        "ecosystem_metadata": ecosystem_metadata,
         # legacy aliases kept so existing dashboard code keeps rendering
         "total_volume_usdc": total,
-        "avg_transaction_usdc": avg,
         "max_txns_in_any_hour": int(max_txns_hour),
         "tags": tags,
+    }
+
+# ------------------------------------------------------------------ /agent/register
+
+class AgentRegisterRequest(BaseModel):
+    address: str = Field(..., description="EVM address to tag")
+    tag: str = Field(..., description="Ecosystem tag (e.g. 'hermes')")
+    metadata: Optional[dict] = Field(None, description="Optional metadata key-values")
+    message: Optional[str] = Field(None, description="The message signed by the EVM wallet")
+    signature: Optional[str] = Field(None, description="The hex signature of the message")
+
+@contextmanager
+def db_write() -> Iterator[sqlite3.Connection]:
+    if not DB_PATH.exists():
+        raise HTTPException(
+            status_code=503,
+            detail=f"Database not found at {DB_PATH}. Is the indexer running?",
+        )
+    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA synchronous = NORMAL;")
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+def get_writable_db() -> Iterator[sqlite3.Connection]:
+    with db_write() as conn:
+        yield conn
+
+@app.post("/agent/register")
+def register_agent(
+    payload: AgentRegisterRequest,
+    conn: sqlite3.Connection = Depends(get_writable_db),
+) -> dict:
+    """
+    Register an ecosystem tag (e.g. 'hermes') for an agent's EVM address.
+    
+    Supports secure EVM message signature verification. For local testing, if no
+    signature is provided and ALLOW_UNSECURED_REGISTRATION is true (default), the
+    registration is allowed unsecured.
+    """
+    addr = payload.address.lower()
+    if not ADDRESS_RE.match(addr):
+        raise HTTPException(status_code=400, detail="invalid address format")
+        
+    tag = payload.tag.strip().lower()
+    if not tag:
+        raise HTTPException(status_code=400, detail="tag cannot be empty")
+        
+    # Verify signature if provided
+    if payload.signature:
+        if not payload.message:
+            raise HTTPException(status_code=400, detail="message is required when signature is provided")
+        try:
+            message_hash = encode_defunct(text=payload.message)
+            recovered_address = Account.recover_message(message_hash, signature=payload.signature)
+            if recovered_address.lower() != addr:
+                raise HTTPException(status_code=401, detail="signature verification failed: address mismatch")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"failed to verify signature: {str(e)}")
+    else:
+        # Check if unsecured registration is allowed
+        allow_unsecured = os.getenv("ALLOW_UNSECURED_REGISTRATION", "true").lower() == "true"
+        if not allow_unsecured:
+            raise HTTPException(status_code=401, detail="signature is required for production registration")
+            
+    # Serialize metadata
+    meta_str = json.dumps(payload.metadata) if payload.metadata else None
+    now = now_ts()
+    
+    # Save/update in database
+    try:
+        conn.execute(
+            "INSERT INTO agent_tags (address, tag, metadata, created_at) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(address) DO UPDATE SET "
+            "  tag = excluded.tag, "
+            "  metadata = COALESCE(excluded.metadata, agent_tags.metadata), "
+            "  created_at = excluded.created_at",
+            (addr, tag, meta_str, now),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"database write failed: {str(e)}")
+        
+    return {
+        "ok": True,
+        "address": addr,
+        "tag": tag,
+        "message": "Agent registered successfully",
     }

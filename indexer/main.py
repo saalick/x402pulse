@@ -287,6 +287,14 @@ CREATE TABLE IF NOT EXISTS indexer_state (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS agent_tags (
+    address       TEXT PRIMARY KEY,
+    tag           TEXT NOT NULL,
+    metadata      TEXT,                       -- JSON string for arbitrary metadata
+    created_at    INTEGER NOT NULL            -- unix seconds
+);
+CREATE INDEX IF NOT EXISTS idx_agent_tags_tag ON agent_tags(tag);
 """
 
 

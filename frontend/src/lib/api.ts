@@ -48,6 +48,7 @@ export type FeedRow = {
   to_address: string;
   amount_usdc: number;
   facilitator: string;
+  agent_tag?: string | null;
 };
 
 export type Alert = {
@@ -84,6 +85,8 @@ export type AgentProfile = {
   hourly_24h: AgentHourPoint[];
   facilitators: AgentFacilitator[];
   recent_transactions: FeedRow[];
+  ecosystem_tag?: string | null;
+  ecosystem_metadata?: any;
   // legacy aliases also returned by the API
   total_volume_usdc: number;
   avg_transaction_usdc: number;
