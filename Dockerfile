@@ -17,6 +17,5 @@ RUN chmod +x start.sh
 
 EXPOSE 8000
 
-# Single entrypoint that runs both the indexer (background) and the
-# FastAPI service (foreground). See start.sh for the supervision logic.
+
 CMD ["./start.sh"]
